@@ -5,95 +5,76 @@ from app.agent.agent import BrowserAgent
 from app.policy.hidden_detector import HiddenContentDetector
 from app.policy.policy_engine import PolicyEngine
 from app.policy.decision import PolicyDecision
+from app.policy.gate import enforce_action_contract, GateRejected
 
 
 def run_browser_agent():
-
     browser_agent = BrowserAgent()
-
     browser_agent.set_task("Buy the laptop")
 
     detector = HiddenContentDetector()
-
     policy = PolicyEngine()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            slow_mo=500,
-        )
-
+        browser = p.chromium.launch(headless=False, slow_mo=500)
         page = browser.new_page()
 
         project_root = Path(__file__).resolve().parents[3]
-
         page.goto((project_root / "test-pages" / "shopping.html").as_uri())
 
-        # ---------------------------------
-        # STEP 1
-        # Detect hidden content
-        # ---------------------------------
+        while not browser_agent.is_done():
+            # detect hidden content
+            hidden = detector.detect(page)
 
-        hidden = detector.detect(page)
+            # extract DOM
+            dom = page.content()
 
-        print("\nHidden Detector")
-        print(hidden)
+            # ask Gemini
+            action = browser_agent.think(dom)
+            print(f"\n--- Step {browser_agent.step_count} ---")
+            print(action.model_dump())
 
-        # ---------------------------------
-        # STEP 2
-        # Extract DOM
-        # ---------------------------------
+            if action.action_type == "done":
+                print("Agent reports task complete.")
+                break
 
-        dom = page.content()
+            # --- GATE: runs before Playwright or the policy engine ---
+            try:
+                enforce_action_contract(action)
+            except GateRejected as e:
+                print(f"\nGATE REJECTED: {e}")
+                break  # never execute, never even classify
 
-        # ---------------------------------
-        # STEP 3
-        # Ask Gemini
-        # ---------------------------------
+            # policy engine
+            result = policy.evaluate(action, hidden["hidden_found"])
+            print(result.model_dump())
 
-        action = browser_agent.think(dom)
-
-        print("\nAgent Action")
-        print(action.model_dump())
-
-        # ---------------------------------
-        # STEP 4
-        # Policy Engine
-        # ---------------------------------
-
-        result = policy.evaluate(action, hidden["hidden_found"])
-
-        print("\nPolicy Result")
-        print(result.model_dump())
-
-        # ---------------------------------
-        # STEP 5
-        # Decision
-        # ---------------------------------
-
-        if result.decision == PolicyDecision.ALLOW:
-            print("\nALLOW")
-
-            if action.action_type == "click":
-                page.click(action.target)
-
-        elif result.decision == PolicyDecision.ESCALATE:
-            print("\nESCALATE")
-
-            answer = input("Approve action? (y/n): ")
-
-            if answer.lower() == "y":
-                page.click(action.target)
-
+            # decision
+            if result.decision == PolicyDecision.ALLOW:
+                _execute(page, action)
+            elif result.decision == PolicyDecision.ESCALATE:
+                if input("Approve action? (y/n): ").lower() == "y":
+                    _execute(page, action)
+                else:
+                    print("Cancelled.")
+                    break
             else:
-                print("Cancelled.")
+                print("DENY — stopping sequence.")
+                break
 
-        else:
-            print("\nDENY")
-
-        page.wait_for_timeout(5000)
-
+        page.wait_for_timeout(3000)
         browser.close()
+
+
+def _execute(page, action):
+    if action.action_type == "click":
+        page.click(action.target)
+    elif action.action_type == "navigate":
+        page.goto(action.target)
+    elif action.action_type in ("fill", "type"):
+        page.fill(action.target, action.value or "")
+    else:
+        print(f"Unhandled action_type: {action.action_type}")
 
 
 if __name__ == "__main__":
