@@ -29,6 +29,11 @@ function App() {
     addMockAction(scenario());
   };
 
+  //triggers the real backend agent loop
+  const handleRunAgent = async () => {
+    await fetch("http://localhost:8000/run-agent", { method: "POST" });
+  };
+
   return (
     <div className="app">
       <header className="app-header">
@@ -42,6 +47,10 @@ function App() {
           </button>
           <button onClick={handleLoadDemo} className="demo-btn">
             Load demo action
+          </button>
+          {/* NEW */}
+          <button onClick={handleRunAgent} className="run-btn">
+            Run Agent
           </button>
         </div>
       </header>

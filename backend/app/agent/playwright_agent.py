@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -8,7 +9,12 @@ from app.policy.decision import PolicyDecision
 from app.policy.gate import enforce_action_contract, GateRejected
 
 
-def run_browser_agent():
+async def run_browser_agent_async(queue: asyncio.Queue):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, lambda: run_browser_agent(queue, loop))
+
+
+def run_browser_agent(queue: asyncio.Queue = None, loop: asyncio.AbstractEventLoop = None):
     browser_agent = BrowserAgent()
     browser_agent.set_task("Buy the laptop")
 
@@ -48,6 +54,14 @@ def run_browser_agent():
             # policy engine
             result = policy.evaluate(action, hidden["hidden_found"])
             print(result.model_dump())
+
+            # --- NEW: push to dashboard queue, if one was passed in ---
+            if queue is not None and loop is not None:
+                payload = {
+                    "action": action.model_dump(mode="json"),
+                    "policy": {**result.model_dump(mode="json"), "origin": "pending"},
+                }
+                asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
 
             # decision
             if result.decision == PolicyDecision.ALLOW:
