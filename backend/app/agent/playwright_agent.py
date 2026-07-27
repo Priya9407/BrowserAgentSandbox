@@ -29,13 +29,36 @@ def run_browser_agent(queue: asyncio.Queue = None, loop: asyncio.AbstractEventLo
         page.goto((project_root / "test-pages" / "shopping.html").as_uri())
 
         while not browser_agent.is_done():
-            # detect hidden content
+            # ------------------------------------------------------------------
+            # Detect hidden content
+            # ------------------------------------------------------------------
             hidden = detector.detect(page)
 
-            # extract DOM
+            # ------------------------------------------------------------------
+            # Extract page text for the source classifier.
+            #
+            # visible_page_text — innerText of the full body (only rendered text,
+            #                     mirrors what a human actually sees).
+            # hidden_page_text  — concatenated innerText of every element the
+            #                     hidden-detector flagged as concealed.
+            # ------------------------------------------------------------------
+            visible_page_text: str = page.evaluate(
+                "() => document.body.innerText || ''"
+            )
+
+            hidden_page_text: str = " ".join(
+                el.get("text", "") or ""
+                for el in hidden.get("elements", [])
+            )
+
+            # ------------------------------------------------------------------
+            # Extract DOM for the LLM
+            # ------------------------------------------------------------------
             dom = page.content()
 
-            # ask Gemini
+            # ------------------------------------------------------------------
+            # Ask the LLM for the next action
+            # ------------------------------------------------------------------
             action = browser_agent.think(dom)
             print(f"\n--- Step {browser_agent.step_count} ---")
             print(action.model_dump())
@@ -44,36 +67,54 @@ def run_browser_agent(queue: asyncio.Queue = None, loop: asyncio.AbstractEventLo
                 print("Agent reports task complete.")
                 break
 
-            # --- GATE: runs before Playwright or the policy engine ---
+            # ------------------------------------------------------------------
+            # GATE — hard pre-condition check
+            # Runs before Playwright or the policy engine see the action.
+            # ------------------------------------------------------------------
             try:
                 enforce_action_contract(action)
             except GateRejected as e:
                 print(f"\nGATE REJECTED: {e}")
-                break  # never execute, never even classify
+                break
 
-            # policy engine
-            result = policy.evaluate(action, hidden["hidden_found"])
+            # ------------------------------------------------------------------
+            # POLICY ENGINE — origin + risk → ALLOW / ESCALATE / DENY
+            # ------------------------------------------------------------------
+            result = policy.evaluate(
+                action,
+                hidden_content_detected=hidden["hidden_found"],
+                user_task=browser_agent.user_task,
+                visible_page_text=visible_page_text,
+                hidden_page_text=hidden_page_text,
+            )
             print(result.model_dump())
 
-            # --- NEW: push to dashboard queue, if one was passed in ---
+            # ------------------------------------------------------------------
+            # Push to dashboard WebSocket queue
+            # ------------------------------------------------------------------
             if queue is not None and loop is not None:
                 payload = {
                     "action": action.model_dump(mode="json"),
-                    "policy": {**result.model_dump(mode="json"), "origin": "pending"},
+                    "policy": result.model_dump(mode="json"),
                 }
                 asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
 
-            # decision
+            # ------------------------------------------------------------------
+            # Execute / escalate / deny
+            # ------------------------------------------------------------------
             if result.decision == PolicyDecision.ALLOW:
                 _execute(page, action)
+
             elif result.decision == PolicyDecision.ESCALATE:
+                print(f"\nESCALATE — origin={result.origin}, reason: {result.reason}")
                 if input("Approve action? (y/n): ").lower() == "y":
                     _execute(page, action)
                 else:
-                    print("Cancelled.")
+                    print("Cancelled by user.")
                     break
-            else:
-                print("DENY — stopping sequence.")
+
+            else:  # DENY
+                print(f"DENY — {result.reason}")
                 break
 
         page.wait_for_timeout(3000)
