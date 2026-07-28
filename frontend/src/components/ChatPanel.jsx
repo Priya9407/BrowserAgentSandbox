@@ -1,14 +1,26 @@
+/**
+ * ChatPanel.jsx 
+ *
+ * Changes from the previous version:
+ *  - Consumes the `step_event` field on chat_status WebSocket messages.
+ *  - Maintains a `stepTimeline` array (keyed by step_number) that is
+ *    upserted on every step_event — so the timeline mutates in place
+ *    (running → success/failed/skipped) rather than appending duplicates.
+ *  - Renders <StepTimeline> inside the message thread immediately after the
+ *    "planning" bubble, so the full history of what happened is always visible.
+ *  - Flat status lines (planning/done/error) are still shown for non-step events.
+ */
+
 import { useEffect, useRef, useState } from "react";
+import StepTimeline from "./StepTimeline";
 
 const STATUS_ICON = {
   planning: "🧠",
-  step:     "⚙️",
   done:     "✅",
   error:    "❌",
 };
 
-// Demo task suggestions — 4 real ordinary tasks (Day 28 D requirement).
-// url is the starting page handed to the agent. goal is what the user typed.
+// Demo task suggestions
 const DEMO_TASKS = [
   {
     label: "Product price",
@@ -28,69 +40,148 @@ const DEMO_TASKS = [
   {
     label: "Buy laptop (demo)",
     goal:  "Find the cheapest laptop on this page and add it to the cart",
-    url:   null,   // uses the local benign_checkout.html test page
+    url:   null,
   },
 ];
 
-export default function ChatPanel({ socketEvents, activeSessionId, onSessionStart }) {
-  const [input, setInput]         = useState("");
-  const [url, setUrl]             = useState("");
-  const [showUrl, setShowUrl]     = useState(false);
-  const [messages, setMessages]   = useState([]);  // { role, text, status?, id }
-  const [running, setRunning]     = useState(false);
-  const bottomRef                 = useRef(null);
-  const inputRef                  = useRef(null);
+// ---------------------------------------------------------------------------
+// Timeline helpers
+// ---------------------------------------------------------------------------
 
-  // -----------------------------------------------------------------------
-  // Consume WebSocket events from the parent (passed down to avoid a second
-  // socket connection). Filter to chat_status events for the active session.
-  // -----------------------------------------------------------------------
+/**
+ * Upsert a step into the timeline array.
+ *
+ * Rules:
+ *  - First time we see a step_number: append a new entry.
+ *  - Subsequent events for the same step_number: update outcome/retry in place
+ *    so the user sees the dot change colour without the list growing.
+ *  - A new entry after a re-plan (isReplan=true) always appends, because it
+ *    belongs to a different plan and might have the same step_number.
+ */
+function upsertStep(prev, evt, isReplan) {
+  const entry = {
+    key:        `${evt.step_number}-${isReplan ? "rp-" + Date.now() : "orig"}`,
+    stepNumber: evt.step_number,
+    totalSteps: evt.total_steps,
+    goal:       evt.goal,
+    outcome:    evt.outcome,
+    retry:      evt.retry ?? 0,
+    isReplan,
+  };
+
+  if (isReplan) {
+    return [...prev, entry];
+  }
+
+  const existingIdx = prev.findIndex(
+    s => s.stepNumber === evt.step_number && !s.isReplan,
+  );
+
+  if (existingIdx === -1) {
+    return [...prev, entry];
+  }
+
+  // Update in-place — only upgrade outcome (don't regress success → running)
+  const existingOutcome = prev[existingIdx].outcome;
+  const finalOutcome =
+    existingOutcome === "success" ? "success" : entry.outcome;
+
+  const updated = [...prev];
+  updated[existingIdx] = {
+    ...updated[existingIdx],
+    outcome: finalOutcome,
+    retry:   Math.max(updated[existingIdx].retry, entry.retry),
+    goal:    entry.goal,          // goal text may be refined on retry
+  };
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export default function ChatPanel({ socketEvents, activeSessionId, onSessionStart }) {
+  const [input, setInput]             = useState("");
+  const [url, setUrl]                 = useState("");
+  const [showUrl, setShowUrl]         = useState(false);
+  const [messages, setMessages]       = useState([]);   // flat chat messages
+  const [stepTimeline, setTimeline]   = useState([]);   // structured step history
+  const [running, setRunning]         = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(true);
+  const replanSeenRef                 = useRef(false);  // track whether a re-plan occurred this run
+  const bottomRef                     = useRef(null);
+  const inputRef                      = useRef(null);
+
+  // -------------------------------------------------------------------------
+  // Consume WebSocket events
+  // -------------------------------------------------------------------------
   useEffect(() => {
     if (!socketEvents || socketEvents.length === 0) return;
-    const latest = socketEvents[0]; // parent prepends newest first
+    const evt = socketEvents[0];
 
-    if (latest.type !== "chat_status") return;
-    if (activeSessionId && latest.session_id !== activeSessionId) return;
+    if (evt.type !== "chat_status") return;
+    if (activeSessionId && evt.session_id !== activeSessionId) return;
 
-    const isTerminal = latest.status === "done" || latest.status === "error";
+    const { status, text, step_event: se } = evt;
 
+    // ── Update step timeline ────────────────────────────────────────────────
+    if (se && typeof se.step_number === "number") {
+      // Detect re-plan: the re-plan recovery emits "↻ Re-planning" in text
+      const isReplan =
+        text.startsWith("↻") || (se.outcome === "failed" && replanSeenRef.current);
+
+      if (text.startsWith("↻ New plan")) {
+        replanSeenRef.current = true;
+      }
+
+      setTimeline(prev => upsertStep(prev, se, isReplan));
+
+      // Step events don't add a flat message — the timeline IS the history.
+      return;
+    }
+
+    // ── Flat message (planning / done / error / re-plan announcement) ───────
+    const isTerminal = status === "done" || status === "error";
+    if (isTerminal) {
+      setRunning(false);
+      replanSeenRef.current = false;
+    }
+
+    // Don't repeat identical consecutive messages
     setMessages(prev => {
-      // Deduplicate: don't append the exact same text twice
-      if (prev.length > 0 && prev[prev.length - 1].text === latest.text) return prev;
+      if (prev.length > 0 && prev[prev.length - 1].text === text) return prev;
       return [
         ...prev,
         {
-          id:     `${latest.session_id}-${prev.length}`,
+          id:     `${evt.session_id ?? "s"}-${Date.now()}-${prev.length}`,
           role:   "status",
-          status: latest.status,
-          text:   latest.text,
+          status,
+          text,
         },
       ];
     });
-
-    if (isTerminal) setRunning(false);
   }, [socketEvents, activeSessionId]);
 
-  // Auto-scroll to bottom whenever messages change
+  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, stepTimeline]);
 
-  // -----------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   // Submit
-  // -----------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   const handleSubmit = async (goalText, startUrl) => {
     const goal = (goalText ?? input).trim();
     if (!goal || running) return;
 
-    // startUrl: from a demo chip (may be null for local page),
-    //           falls back to the manual URL field, then undefined (backend default).
-    const resolvedUrl = startUrl !== undefined ? startUrl : (url.trim() || undefined);
+    const resolvedUrl =
+      startUrl !== undefined ? startUrl : url.trim() || undefined;
 
     setInput("");
     setRunning(true);
+    setTimeline([]);
+    replanSeenRef.current = false;
 
-    // Append the user bubble immediately
     setMessages(prev => [
       ...prev,
       { id: `user-${Date.now()}`, role: "user", text: goal },
@@ -107,13 +198,18 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     } catch (err) {
       setMessages(prev => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "status", status: "error", text: `Failed to start: ${err.message}` },
+        {
+          id:     `err-${Date.now()}`,
+          role:   "status",
+          status: "error",
+          text:   `Failed to start: ${err.message}`,
+        },
       ]);
       setRunning(false);
     }
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = e => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -122,19 +218,27 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
 
   const handleClear = () => {
     setMessages([]);
+    setTimeline([]);
     setRunning(false);
+    replanSeenRef.current = false;
   };
 
-  // -----------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   // Render
-  // -----------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  const hasContent = messages.length > 0 || stepTimeline.length > 0;
+
   return (
     <div className="chat-panel">
       {/* Header */}
       <div className="chat-header">
         <span className="chat-title">Chat</span>
-        {messages.length > 0 && (
-          <button className="chat-clear-btn" onClick={handleClear} title="Clear chat">
+        {hasContent && (
+          <button
+            className="chat-clear-btn"
+            onClick={handleClear}
+            title="Clear chat"
+          >
             Clear
           </button>
         )}
@@ -142,7 +246,8 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
 
       {/* Message thread */}
       <div className="chat-messages">
-        {messages.length === 0 && (
+        {/* Empty state */}
+        {!hasContent && (
           <div className="chat-empty">
             <p className="chat-empty-heading">What should the agent do?</p>
             <p className="chat-empty-sub">Type a goal below, or pick a demo task.</p>
@@ -161,6 +266,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           </div>
         )}
 
+        {/* Flat messages (user bubbles + planning/done/error status lines) */}
         {messages.map(msg => {
           if (msg.role === "user") {
             return (
@@ -169,19 +275,47 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
               </div>
             );
           }
-
-          // status line (planning / step / done / error)
           const icon = STATUS_ICON[msg.status] ?? "•";
-          const cls  = `chat-status-line chat-status-${msg.status}`;
           return (
-            <div key={msg.id} className={cls}>
+            <div
+              key={msg.id}
+              className={`chat-status-line chat-status-${msg.status}`}
+            >
               <span className="chat-status-icon">{icon}</span>
               <span className="chat-status-text">{msg.text}</span>
             </div>
           );
         })}
 
-        {/* Typing indicator while agent is running */}
+        {/* ── Step Timeline ────────────────────────────────────────────── */}
+        {stepTimeline.length > 0 && (
+          <div className="tl-card">
+            {/* Collapsible header */}
+            <button
+              className="tl-card-header"
+              onClick={() => setTimelineOpen(o => !o)}
+              aria-expanded={timelineOpen}
+              aria-controls="step-timeline-body"
+            >
+              <span className="tl-card-title">Step History</span>
+              <span className="tl-card-meta">
+                {stepTimeline.filter(s => s.outcome === "success").length}/
+                {stepTimeline.length} done
+              </span>
+              <span className="tl-card-chevron">
+                {timelineOpen ? "▲" : "▼"}
+              </span>
+            </button>
+
+            {timelineOpen && (
+              <div id="step-timeline-body" className="tl-card-body">
+                <StepTimeline steps={stepTimeline} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Typing indicator */}
         {running && (
           <div className="chat-status-line chat-status-step chat-typing">
             <span className="chat-status-icon">⚙️</span>

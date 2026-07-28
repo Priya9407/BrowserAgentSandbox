@@ -137,15 +137,18 @@ async def chat(body: ChatRequest):
 
     # Launch agent in the background, passing a status_callback so it can
     # emit chat_status events at each step without knowing about WebSockets.
-    async def status_callback(status: str, text: str):
+    async def status_callback(status: str, text: str, step_event: dict | None = None):
         msg = {"role": "agent", "text": text}
         chat_sessions[session_id].append(msg)
-        await _broadcast({
+        payload = {
             "type": "chat_status",
             "session_id": session_id,
             "status": status,
             "text": text,
-        })
+        }
+        if step_event:
+            payload["step_event"] = step_event
+        await _broadcast(payload)
 
     asyncio.create_task(
         _run_chat_agent(

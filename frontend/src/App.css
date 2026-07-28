@@ -582,3 +582,190 @@ body {
     padding: 12px 14px;
   }
 }
+
+/* Step Timeline */
+
+/* Card wrapper that sits inline in the chat thread */
+.tl-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  margin: 4px 0;
+}
+
+/* Collapsible header button */
+.tl-card-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+
+.tl-card-header:hover { background: var(--yellow-light); }
+
+.tl-card-title {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.tl-card-meta {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+
+.tl-card-chevron {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* Body */
+.tl-card-body {
+  padding: 10px 14px 12px;
+}
+
+/* The timeline list */
+.step-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* One row = track (dot + line) + body (text) */
+.tl-entry {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 36px;
+}
+
+/* Left track column: dot stacked above a vertical line */
+.tl-track {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 22px;
+  padding-top: 2px;
+}
+
+.tl-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 2px solid transparent;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+/* Outcome-specific dot colours */
+.tl-dot.tl-running  { background: #fff8e1; border-color: var(--yellow); color: #a07000; }
+.tl-dot.tl-success  { background: #e6fff6; border-color: var(--green);  color: #007a5a; }
+.tl-dot.tl-failed   { background: #fff0f7; border-color: var(--red);    color: #c0004a; }
+.tl-dot.tl-skipped  { background: #f5f5f5; border-color: #ccc;          color: #888;    }
+
+/* Connector line between dots */
+.tl-line {
+  width: 2px;
+  flex: 1;
+  min-height: 10px;
+  background: var(--border);
+  margin: 3px 0 2px;
+}
+
+/* Right body column */
+.tl-body {
+  flex: 1;
+  padding-top: 1px;
+  padding-bottom: 8px;
+}
+
+/* Re-plan marker */
+.tl-replan-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  color: #cc8a00;
+  background: #fffbeb;
+  border: 1px solid var(--yellow-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-bottom: 4px;
+}
+
+/* Goal text row */
+.tl-goal {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.tl-step-num {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.tl-goal-text {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* Outcome-specific goal text colour */
+.tl-goal.tl-success .tl-goal-text  { color: #007a5a; }
+.tl-goal.tl-failed  .tl-goal-text  { color: #c0004a; }
+.tl-goal.tl-skipped .tl-goal-text  { color: #888; text-decoration: line-through; }
+.tl-goal.tl-running .tl-goal-text  { color: var(--text); font-weight: 600; }
+
+/* Badges row below goal */
+.tl-badges {
+  display: flex;
+  gap: 5px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+
+.tl-outcome-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.tl-outcome-badge.tl-running { background: #fff8e1; color: #a07000; }
+.tl-outcome-badge.tl-success { background: #e6fff6; color: #007a5a; }
+.tl-outcome-badge.tl-failed  { background: #fff0f7; color: #c0004a; }
+.tl-outcome-badge.tl-skipped { background: #f5f5f5; color: #888;    }
+
+.tl-retry-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fff0d6;
+  color: #cc8a00;
+}
