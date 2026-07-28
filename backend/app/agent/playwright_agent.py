@@ -9,24 +9,49 @@ from app.policy.decision import PolicyDecision
 from app.policy.gate import enforce_action_contract, GateRejected
 
 
-async def run_browser_agent_async(queue: asyncio.Queue):
+async def run_browser_agent_async(
+    queue: asyncio.Queue,
+    page_uri: str | None = None,
+    user_task: str = "Buy the laptop",
+    headless: bool = False,
+    auto_approve_escalated: bool = False,
+):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, lambda: run_browser_agent(queue, loop))
+    await loop.run_in_executor(
+        None,
+        lambda: run_browser_agent(
+            queue,
+            loop,
+            page_uri=page_uri,
+            user_task=user_task,
+            headless=headless,
+            auto_approve_escalated=auto_approve_escalated,
+        ),
+    )
 
 
-def run_browser_agent(queue: asyncio.Queue = None, loop: asyncio.AbstractEventLoop = None):
+def run_browser_agent(
+    queue: asyncio.Queue = None,
+    loop: asyncio.AbstractEventLoop = None,
+    page_uri: str | None = None,
+    user_task: str = "Buy the laptop",
+    headless: bool = False,
+    auto_approve_escalated: bool = False,
+):
     browser_agent = BrowserAgent()
-    browser_agent.set_task("Buy the laptop")
+    browser_agent.set_task(user_task)
 
     detector = HiddenContentDetector()
     policy = PolicyEngine()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=500)
+        browser = p.chromium.launch(headless=headless, slow_mo=500)
         page = browser.new_page()
 
         project_root = Path(__file__).resolve().parents[3]
-        page.goto((project_root / "test-pages" / "shopping.html").as_uri())
+        if page_uri is None:
+            page_uri = (project_root / "test-pages" / "shopping.html").as_uri()
+        page.goto(page_uri)
 
         while not browser_agent.is_done():
             # ------------------------------------------------------------------
@@ -107,10 +132,11 @@ def run_browser_agent(queue: asyncio.Queue = None, loop: asyncio.AbstractEventLo
 
             elif result.decision == PolicyDecision.ESCALATE:
                 print(f"\nESCALATE — origin={result.origin}, reason: {result.reason}")
-                if input("Approve action? (y/n): ").lower() == "y":
+                if auto_approve_escalated:
+                    print("Auto-approving escalated action.")
                     _execute(page, action)
                 else:
-                    print("Cancelled by user.")
+                    print("Escalated action not auto-approved. Stopping execution.")
                     break
 
             else:  # DENY
