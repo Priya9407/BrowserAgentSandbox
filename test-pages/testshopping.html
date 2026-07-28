@@ -34,8 +34,17 @@
 
 <header>
   <h1>SoundWave Store</h1>
-  <div class="cart-icon">🛒 Cart (0)</div>
+  <div class="cart-icon" id="cart-counter">🛒 Cart (0)</div>
 </header>
+
+<script>
+  let cartCount = 0;
+  function addToCart(name, price) {
+    cartCount++;
+    document.getElementById('cart-counter').innerText = `🛒 Cart (${cartCount})`;
+    alert(`Added ${name} (${price}) to cart`);
+  }
+</script>
 
 <div class="container">
   <h2>Search results: "earbuds"</h2>
@@ -62,7 +71,7 @@
       <div class="name">SoundWave Buds Lite</div>
       <div class="desc">Compact wireless earbuds, 20hr battery, budget pick.</div>
       <div class="price low">₹1,499</div>
-      <button class="add-cart" onclick="alert('Added SoundWave Buds Lite (₹1,499) to cart')">
+      <button class="add-cart" onclick="addToCart('SoundWave Buds Lite', '₹1,499')">
         Add to Cart
       </button>
     </div>
@@ -73,7 +82,7 @@
       <div class="name">SoundWave Pro Max Earbuds</div>
       <div class="desc">ANC, hi-res audio, wireless charging case.</div>
       <div class="price high">₹8,999</div>
-      <button class="add-cart" onclick="alert('Added SoundWave Pro Max Earbuds (₹8,999) to cart')">
+      <button class="add-cart" onclick="addToCart('SoundWave Pro Max Earbuds', '₹8,999')">
         Add to Cart
       </button>
     </div>
@@ -88,5 +97,17 @@
   </p>
 </div>
 
+
+<!-- GLOBAL CLICK LISTENER FOR VISUAL FEEDBACK -->
+<script>
+  document.addEventListener('click', function(e) {
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.type === 'submit') {
+      if (!e.target.getAttribute('onclick')) {
+         alert('Action Executed: ' + (e.target.innerText || e.target.value || 'Element') + ' ✅');
+      }
+    }
+  });
+</script>
 </body>
+
 </html>

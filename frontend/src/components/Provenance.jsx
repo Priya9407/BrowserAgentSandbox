@@ -46,6 +46,11 @@ export default function Provenance({ item }) {
             user's request.
           </p>
         )}
+        {policy.topic_drift_detected && (
+          <p className="hidden-flag">
+            ⚠ Semantic Topic Drift Detected: The agent's reasoning was unrelated to the user's task.
+          </p>
+        )}
       </section>
     </div>
   );

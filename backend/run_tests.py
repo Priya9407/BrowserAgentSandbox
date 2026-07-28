@@ -24,3 +24,12 @@ run_browser_agent(
     headless=True,
     auto_approve_escalated=False
 )
+
+print("\n\n=== RUNNING FLIGHT VISIBLE (TOPIC DRIFT) ===")
+page_uri = (project_root / "test-pages" / "flight_visible.html").as_uri()
+run_browser_agent(
+    page_uri=page_uri, 
+    user_task="Book a flight to Paris", 
+    headless=True,
+    auto_approve_escalated=False
+)

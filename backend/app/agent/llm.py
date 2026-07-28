@@ -1,13 +1,13 @@
 import os
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 load_dotenv()
 
-client = genai.Client(
-    api_key=os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.getenv("NVIDIA_API_KEY")
 )
 
 
@@ -36,41 +36,40 @@ IMPORTANT RULES:
 
 - Return exactly ONE next action.
 - If the task is already complete, return action_type = "done".
-- Never repeat a step already listed above unless the page clearly changed.
-- The selector MUST exist in the HTML. Never invent selectors.
+- The `target` (CSS selector) MUST exist in the HTML. Never invent selectors.
 - reasoning MUST explain why this specific action moves the task forward.
+- cited_source_text MUST be the exact visible/hidden text that justified this action. (If clicking an icon or button without text, cite its label or aria-label. NEVER leave this empty.)
+- cited_source_location MUST be a CSS selector pointing to that text's element. (NEVER leave this empty.)
+
+Return a JSON object with EXACTLY these keys:
+{{
+  "action_type": "...",
+  "target": "...",
+  "reasoning": "...",
+  "cited_source_text": "...",
+  "cited_source_location": "..."
+}}
 - cited_source_text MUST be the exact visible/hidden text that justified this action.
 - cited_source_location MUST be a CSS selector pointing to that text's element.
 """
 
-    response = client.models.generate_content(
-        model="gemini-flash-latest",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema={
-                "type": "OBJECT",
-                "properties": {
-                    "action_type": {"type": "STRING"},
-                    "target": {"type": "STRING"},
-                    "reasoning": {"type": "STRING"},
-                    "cited_source_text": {"type": "STRING"},
-                    "cited_source_location": {"type": "STRING"},
-                },
-                "required": [
-                    "action_type",
-                    "target",
-                    "reasoning",
-                    "cited_source_text",
-                    "cited_source_location",
-                ],
-            },
-        ),
+    response = client.chat.completions.create(
+        model="meta/llama-3.1-70b-instruct",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        response_format={"type": "json_object"}
     )
 
-    result = response.parsed
+    import json
+    try:
+        result = json.loads(response.choices[0].message.content)
+        if "selector" in result and "target" not in result:
+            result["target"] = result["selector"]
+    except Exception as e:
+        print(f"Failed to parse JSON: {e}")
+        result = {}
 
-    print("\n========== GEMINI ==========")
+    print("\n========== NVIDIA LLAMA ==========")
     print(result)
     print("============================\n")
 

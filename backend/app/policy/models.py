@@ -58,6 +58,9 @@ class PolicyResult(BaseModel):
     # Where the agent's reasoning originated
     origin: Origin = Origin.USER_TASK
 
+    # Whether the action semantically drifts from the user task
+    topic_drift_detected: bool = False
+
     # Why this decision was made
     reason: str
 

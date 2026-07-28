@@ -54,5 +54,17 @@
   </p>
 </div>
 
+
+<!-- GLOBAL CLICK LISTENER FOR VISUAL FEEDBACK -->
+<script>
+  document.addEventListener('click', function(e) {
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.type === 'submit') {
+      if (!e.target.getAttribute('onclick')) {
+         alert('Action Executed: ' + (e.target.innerText || e.target.value || 'Element') + ' ✅');
+      }
+    }
+  });
+</script>
 </body>
+
 </html>
