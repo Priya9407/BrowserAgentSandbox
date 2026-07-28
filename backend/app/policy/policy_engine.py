@@ -5,75 +5,85 @@ The core security engine of Frontier.
 
 Responsibilities
 ----------------
-1. Classify browser action
-2. Determine risk level
-3. Detect hidden content
-4. Decide:
-        ALLOW
-        DENY
-        ESCALATE
-5. Return PolicyResult
+1. Run the instruction-source classifier  (WHERE did this come from?)
+2. Classify browser action into a risk category
+3. Determine risk level (LOW / MEDIUM / HIGH / CRITICAL)
+4. Detect hidden content
+5. Combine origin + risk → ALLOW / DENY / ESCALATE
+6. Return PolicyResult
+
+Decision matrix
+---------------
+origin=hidden_page_content                → always ESCALATE minimum, DENY if high/critical risk
+origin=visible_page_content + high risk   → ESCALATE
+origin=user_task                          → normal risk-based rules apply
 """
 
 from app.schemas.action_schema import AgentAction
 
 from app.policy.classifier import RiskClassifier
-from app.policy.risk_taxonomy import (
-    RiskCategory,
-    get_risk_level,
-)
+from app.policy.source_classifier import SourceClassifier
+from app.policy.risk_taxonomy import RiskCategory, get_risk_level
 from app.policy.decision import PolicyDecision
-from app.policy.models import PolicyResult
+from app.policy.models import Origin, PolicyResult
 
 
 class PolicyEngine:
     def __init__(self):
-
         self.classifier = RiskClassifier()
+        self.source_classifier = SourceClassifier()
 
     def evaluate(
         self,
         action: AgentAction,
         hidden_content_detected: bool = False,
+        user_task: str = "",
+        visible_page_text: str = "",
+        hidden_page_text: str = "",
     ) -> PolicyResult:
 
         # ------------------------------------
         # STEP 1
-        # Classify the action
+        # Classify instruction source (origin)
+        # ------------------------------------
+
+        origin = self.source_classifier.classify(
+            cited_source_text=action.cited_source_text,
+            user_task=user_task,
+            visible_page_text=visible_page_text,
+            hidden_page_text=hidden_page_text,
+        )
+
+        # ------------------------------------
+        # STEP 2
+        # Classify the action into a risk category
         # ------------------------------------
 
         category = self.classifier.classify(action)
 
         # ------------------------------------
-        # STEP 2
-        # Convert to LOW/MEDIUM/HIGH
+        # STEP 3
+        # Convert to LOW / MEDIUM / HIGH / CRITICAL
         # ------------------------------------
 
         risk_level = get_risk_level(category)
 
         # ------------------------------------
-        # STEP 3
-        # Decide
-        # ------------------------------------
-
-        decision = self._decide(
-            category,
-            hidden_content_detected,
-        )
-
-        # ------------------------------------
         # STEP 4
-        # Build explanation
+        # Decide — origin tightens the outcome
         # ------------------------------------
 
-        reason = self._reason(
-            category,
-            decision,
-            hidden_content_detected,
-        )
+        decision = self._decide(category, hidden_content_detected, origin)
 
         # ------------------------------------
         # STEP 5
+        # Build human-readable explanation
+        # ------------------------------------
+
+        reason = self._reason(category, decision, hidden_content_detected, origin)
+
+        # ------------------------------------
+        # STEP 6
         # Return result
         # ------------------------------------
 
@@ -83,6 +93,7 @@ class PolicyEngine:
             risk_level=risk_level,
             decision=decision,
             hidden_content_detected=hidden_content_detected,
+            origin=origin,
             reason=reason,
             metadata={
                 "target": action.target,
@@ -90,25 +101,75 @@ class PolicyEngine:
             },
         )
 
-    # -------------------------------------------------
+    # ------------------------------------------------------------------
+    # Decision logic
+    # ------------------------------------------------------------------
 
     def _decide(
         self,
         category: RiskCategory,
         hidden: bool,
+        origin: Origin,
     ) -> PolicyDecision:
 
-        # ----------------------------------
-        # Hidden prompt detected
-        # Never trust it.
-        # ----------------------------------
+        # --------------------------------------------------
+        # Hidden DOM content detected on page
+        # The page is actively trying to hide instructions —
+        # block any high/critical action outright, escalate
+        # everything else so the human can see what happened.
+        # --------------------------------------------------
 
         if hidden:
-            return PolicyDecision.DENY
+            if category in (
+                RiskCategory.CREDENTIAL,
+                RiskCategory.PAYMENT,
+                RiskCategory.SEND,
+                RiskCategory.DELETE,
+            ):
+                return PolicyDecision.DENY
+            return PolicyDecision.ESCALATE
 
-        # ----------------------------------
-        # Safe
-        # ----------------------------------
+        # --------------------------------------------------
+        # Instruction came from HIDDEN page text
+        # Even if the page element isn't flagged by the
+        # heuristic detector, the cited text itself traces
+        # back to hidden content — never auto-trust.
+        # --------------------------------------------------
+
+        if origin == Origin.HIDDEN_PAGE_CONTENT:
+            if category in (
+                RiskCategory.CREDENTIAL,
+                RiskCategory.PAYMENT,
+                RiskCategory.SEND,
+                RiskCategory.DELETE,
+            ):
+                return PolicyDecision.DENY
+            return PolicyDecision.ESCALATE
+
+        # --------------------------------------------------
+        # Instruction came from VISIBLE page text
+        # The page may be legitimately guiding the agent, but
+        # page content is never a trusted authority for
+        # high-risk actions — require human sign-off.
+        # --------------------------------------------------
+
+        if origin == Origin.VISIBLE_PAGE_CONTENT:
+            if category in (
+                RiskCategory.CREDENTIAL,
+                RiskCategory.PAYMENT,
+                RiskCategory.DOWNLOAD,
+                RiskCategory.FILE_UPLOAD,
+                RiskCategory.SEND,
+                RiskCategory.DELETE,
+            ):
+                return PolicyDecision.ESCALATE
+            # Low/medium risk from visible content is fine
+            return PolicyDecision.ALLOW
+
+        # --------------------------------------------------
+        # Instruction came from the USER'S OWN TASK
+        # Normal risk-based rules apply.
+        # --------------------------------------------------
 
         if category == RiskCategory.NAVIGATION:
             return PolicyDecision.ALLOW
@@ -116,57 +177,67 @@ class PolicyEngine:
         if category == RiskCategory.FORM_FILL:
             return PolicyDecision.ALLOW
 
-        # ----------------------------------
-        # Needs approval
-        # ----------------------------------
-
-        if category in [
+        if category in (
             RiskCategory.CREDENTIAL,
             RiskCategory.PAYMENT,
             RiskCategory.DOWNLOAD,
             RiskCategory.FILE_UPLOAD,
             RiskCategory.SEND,
-        ]:
+        ):
             return PolicyDecision.ESCALATE
-
-        # ----------------------------------
-        # Dangerous
-        # ----------------------------------
 
         if category == RiskCategory.DELETE:
             return PolicyDecision.DENY
 
-        # ----------------------------------
-        # Unknown action
-        # ----------------------------------
-
+        # Unknown action — escalate to be safe
         return PolicyDecision.ESCALATE
 
-    # -------------------------------------------------
+    # ------------------------------------------------------------------
+    # Reason builder
+    # ------------------------------------------------------------------
 
     def _reason(
         self,
         category: RiskCategory,
         decision: PolicyDecision,
         hidden: bool,
+        origin: Origin,
     ) -> str:
 
         if hidden:
-            return "Hidden HTML or CSS content detected. Action blocked for security."
+            return (
+                "Hidden HTML/CSS content detected on the page. "
+                "Action blocked or escalated: the page may be attempting "
+                "a prompt-injection attack via concealed DOM elements."
+            )
 
+        if origin == Origin.HIDDEN_PAGE_CONTENT:
+            return (
+                "The agent's cited reasoning traces back to hidden page content "
+                "(display:none, off-screen, zero-opacity, or similar). "
+                "Instructions from hidden elements are never auto-trusted."
+            )
+
+        if origin == Origin.VISIBLE_PAGE_CONTENT:
+            base = (
+                "The agent's reasoning originates from visible page text, "
+                "not the user's original task. "
+            )
+            if decision == PolicyDecision.ESCALATE:
+                return base + "Human approval required before a high-risk page-sourced action is executed."
+            return base + "Action is low-risk and within scope."
+
+        # origin == USER_TASK — normal explanations
         explanations = {
-            RiskCategory.NAVIGATION: "Navigation is considered low risk.",
-            RiskCategory.FORM_FILL: "Form filling is considered safe.",
-            RiskCategory.CREDENTIAL: "Credentials require explicit user approval.",
-            RiskCategory.PAYMENT: "Payment requires explicit user approval.",
-            RiskCategory.DOWNLOAD: "Downloads require user approval.",
-            RiskCategory.FILE_UPLOAD: "Uploading files requires user approval.",
+            RiskCategory.NAVIGATION: "Navigation action rooted in the user's task. Safe to execute.",
+            RiskCategory.FORM_FILL: "Form-fill action rooted in the user's task. Safe to execute.",
+            RiskCategory.CREDENTIAL: "Credential entry requires explicit user approval.",
+            RiskCategory.PAYMENT: "Payment action requires explicit user approval.",
+            RiskCategory.DOWNLOAD: "Download requires user approval.",
+            RiskCategory.FILE_UPLOAD: "File upload requires user approval.",
             RiskCategory.SEND: "Sending data requires user approval.",
-            RiskCategory.DELETE: "Delete operations are blocked.",
-            RiskCategory.UNKNOWN: "Unknown browser action.",
+            RiskCategory.DELETE: "Delete operations are blocked by policy.",
+            RiskCategory.UNKNOWN: "Unknown action type — escalating to be safe.",
         }
 
-        return explanations.get(
-            category,
-            "Unknown policy decision.",
-        )
+        return explanations.get(category, "No reason available.")

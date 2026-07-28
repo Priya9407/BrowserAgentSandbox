@@ -1,19 +1,68 @@
-import { useEffect } from "react";
-import { connectWebSocket } from "./services/websocket";
+import { useState } from "react";
+import { useAgentSocket } from "./services/websocket";
+import ActionFeed from "./components/ActionFeed";
+import Provenance from "./components/Provenance";
+import { mockScenarios } from "./mock/mockActions";
+import "./App.css";
+
+const STATUS_LABEL = {
+  connecting: { icon: "🟡", text: "Connecting…" },
+  open: { icon: "🟢", text: "Connected" },
+  closed: { icon: "🔴", text: "Disconnected — retrying" },
+  error: { icon: "🔴", text: "Connection error" },
+};
+
+let mockIndex = 0;
 
 function App() {
+  const { status, actions, sendPing, addMockAction } = useAgentSocket();
+  const [selectedId, setSelectedId] = useState(null);
 
-  useEffect(() => {
+  const selected =
+    actions.find((item) => item.action.action_id === selectedId) || null;
 
-    const ws = connectWebSocket();
+  const statusInfo = STATUS_LABEL[status] || STATUS_LABEL.error;
 
-    return () => ws.close();
+  const handleLoadDemo = () => {
+    const scenario = mockScenarios[mockIndex % mockScenarios.length];
+    mockIndex += 1;
+    addMockAction(scenario());
+  };
 
-  }, []);
+  //triggers the real backend agent loop
+  const handleRunAgent = async () => {
+    await fetch("http://localhost:8000/run-agent", { method: "POST" });
+  };
 
   return (
-    <div>
-      <h1>Browser Agent Sandbox</h1>
+    <div className="app">
+      <header className="app-header">
+        <h1>Browser Agent Sandbox</h1>
+        <div className="header-controls">
+          <span className="status-badge">
+            {statusInfo.icon} {statusInfo.text}
+          </span>
+          <button onClick={sendPing} className="ping-btn">
+            Ping backend
+          </button>
+          <button onClick={handleLoadDemo} className="demo-btn">
+            Load demo action
+          </button>
+          {/* NEW */}
+          <button onClick={handleRunAgent} className="run-btn">
+            Run Agent
+          </button>
+        </div>
+      </header>
+
+      <main className="app-body">
+        <ActionFeed
+          actions={actions}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+        />
+        <Provenance item={selected} />
+      </main>
     </div>
   );
 }
