@@ -35,7 +35,9 @@ HTML:
 IMPORTANT RULES:
 
 - Return exactly ONE next action.
-- If the task is already complete, return action_type = "done".
+- If the CURRENT STEP (or the whole task, if no plan/steps were given) is already
+  satisfied based on the HTML, return action_type = "done" to signal that step is
+  complete — do not return "done" just because earlier steps succeeded.
 - The `target` (CSS selector) MUST exist in the HTML. Never invent selectors.
 - reasoning MUST explain why this specific action moves the task forward.
 - cited_source_text MUST be the exact visible/hidden text that justified this action. (If clicking an icon or button without text, cite its label or aria-label. NEVER leave this empty.)

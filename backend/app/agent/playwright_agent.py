@@ -7,7 +7,7 @@ from app.policy.hidden_detector import HiddenContentDetector
 from app.policy.policy_engine import PolicyEngine
 from app.policy.decision import PolicyDecision
 from app.policy.gate import enforce_action_contract, GateRejected
-
+from app.agent.planner import generate_plan
 
 async def run_browser_agent_async(
     queue: asyncio.Queue,
@@ -40,6 +40,19 @@ def run_browser_agent(
 ):
     browser_agent = BrowserAgent()
     browser_agent.set_task(user_task)
+
+    # ------------------------------------------------------------------
+    # PLANNING LAYER — generate a structured step list up front, once,
+    # before entering the per-action loop below. Each step is grounded
+    # into a concrete AgentAction later, per-iteration, by the existing
+    # browser_agent.think(dom) → get_next_action() call — that part is
+    # completely unchanged.
+    # ------------------------------------------------------------------
+    plan = generate_plan(user_task)
+    print("\n========== GENERATED PLAN ==========")
+    print(plan.model_dump_json(indent=2))
+    print("=====================================\n")
+    browser_agent.set_plan(plan)
 
     detector = HiddenContentDetector()
     policy = PolicyEngine()
@@ -89,8 +102,17 @@ def run_browser_agent(
             print(action.model_dump())
 
             if action.action_type == "done":
-                print("Agent reports task complete.")
-                break
+                if browser_agent.plan and not browser_agent.is_last_step():
+                    print(
+                        f"Step {browser_agent.current_step_index + 1} "
+                        f"('{browser_agent.plan.steps[browser_agent.current_step_index].goal}') "
+                        f"complete — advancing to next step."
+                    )
+                    browser_agent.advance_step()
+                    continue
+                else:
+                    print("Agent reports task complete.")
+                    break
 
             # ------------------------------------------------------------------
             # GATE — hard pre-condition check
@@ -129,12 +151,14 @@ def run_browser_agent(
             # ------------------------------------------------------------------
             if result.decision == PolicyDecision.ALLOW:
                 _execute(page, action)
+                browser_agent.advance_step()
 
             elif result.decision == PolicyDecision.ESCALATE:
                 print(f"\nESCALATE — origin={result.origin}, reason: {result.reason}")
                 if auto_approve_escalated:
                     print("Auto-approving escalated action.")
                     _execute(page, action)
+                    browser_agent.advance_step()
                 else:
                     if queue is not None and loop is not None:
                         # Wait for UI approval
@@ -149,6 +173,7 @@ def run_browser_agent(
                         if decision_ui == "approved":
                             print(f"Human APPROVED action {action.action_id}")
                             _execute(page, action)
+                            browser_agent.advance_step()
                         else:
                             print(f"Human DENIED action {action.action_id}. Stopping execution.")
                             break
