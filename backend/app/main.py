@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,13 +19,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 action_queue: asyncio.Queue = asyncio.Queue()
 active_connections: list[WebSocket] = []
 
+# In-memory chat session history  { session_id: [messages] }
+chat_sessions: dict[str, list[dict]] = {}
+
+
+# ---------------------------------------------------------------------------
+# Helper — push any payload to all WebSocket clients
+# ---------------------------------------------------------------------------
+async def _broadcast(payload: dict):
+    await action_queue.put(payload)
+
+
+# ---------------------------------------------------------------------------
+# Root
+# ---------------------------------------------------------------------------
 @app.get("/")
 def home():
     return {"status": "running"}
 
+
+# ---------------------------------------------------------------------------
+# /run-agent  (existing flow, unchanged)
+# ---------------------------------------------------------------------------
 @app.post("/run-agent")
 async def run_agent(
     page: str = "shopping",
@@ -62,9 +82,158 @@ async def run_agent(
     )
     return {"status": "started", "page": page_file}
 
+
+# ---------------------------------------------------------------------------
+# /chat  — the new chat-driven entrypoint
+#
+# Request body:
+#   goal   : free-text goal the user typed ("search for the price of RTX 4090")
+#   url    : optional starting URL (defaults to our benign shopping page)
+#   headless: bool, default True so the browser stays out of the way
+#
+# How it works:
+#   1. Creates a session_id and records the user message in chat_sessions.
+#   2. Broadcasts a chat_status "planning" event over WebSocket immediately
+#      so the UI can show a spinner/status line without waiting.
+#   3. Fires off the agent task in the background (non-blocking).
+#   4. Returns { session_id } immediately — the rest arrives over WebSocket.
+#
+# WebSocket message types emitted during a /chat run:
+#   { type: "chat_status",  session_id, status, text }
+#     status values: "planning" | "step" | "done" | "error"
+#   { type: "action",       session_id, action, policy }   ← existing action-feed events
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    goal: str
+    url: str | None = None
+    headless: bool = True
+
+
+@app.post("/chat")
+async def chat(body: ChatRequest):
+    session_id = str(uuid.uuid4())
+
+    # Record the user message
+    chat_sessions[session_id] = [
+        {"role": "user", "text": body.goal}
+    ]
+
+    # Immediate "planning" status so the UI reacts right away
+    await _broadcast({
+        "type": "chat_status",
+        "session_id": session_id,
+        "status": "planning",
+        "text": f'Planning how to: "{body.goal}"',
+    })
+
+    # Resolve the start URL
+    project_root = Path(__file__).resolve().parents[2]
+    if body.url:
+        page_uri = body.url
+    else:
+        # Default demo page — benign shopping so ordinary tasks work
+        page_uri = (project_root / "test-pages" / "benign_checkout.html").as_uri()
+
+    # Launch agent in the background, passing a status_callback so it can
+    # emit chat_status events at each step without knowing about WebSockets.
+    async def status_callback(status: str, text: str):
+        msg = {"role": "agent", "text": text}
+        chat_sessions[session_id].append(msg)
+        await _broadcast({
+            "type": "chat_status",
+            "session_id": session_id,
+            "status": status,
+            "text": text,
+        })
+
+    asyncio.create_task(
+        _run_chat_agent(
+            session_id=session_id,
+            goal=body.goal,
+            page_uri=page_uri,
+            headless=body.headless,
+            status_callback=status_callback,
+        )
+    )
+
+    return {"session_id": session_id, "status": "started"}
+
+
+async def _run_chat_agent(
+    session_id: str,
+    goal: str,
+    page_uri: str,
+    headless: bool,
+    status_callback,
+):
+    """
+    Wraps run_browser_agent_async with:
+    - a pre-run "planning" step message
+    - per-action status events (via action_queue, same as before)
+    - a final "done" or "error" message
+    """
+    try:
+        # Wrap the action_queue so every action payload also gets a
+        # session_id and type="action" attached, keeping it compatible
+        # with the existing ActionFeed while also letting ChatPanel filter
+        # by session_id.
+        tagged_queue: asyncio.Queue = asyncio.Queue()
+
+        async def _forward_tagged():
+            while True:
+                item = await tagged_queue.get()
+                if item is None:
+                    break
+                # Tag with session info for the chat panel
+                item["type"] = "action"
+                item["session_id"] = session_id
+                await action_queue.put(item)
+
+        forwarder = asyncio.create_task(_forward_tagged())
+
+        await run_browser_agent_async(
+            tagged_queue,
+            page_uri=page_uri,
+            user_task=goal,
+            headless=headless,
+            auto_approve_escalated=False,
+            step_callback=status_callback,   # streams per-step progress to chat
+        )
+
+        # Signal forwarder to stop
+        await tagged_queue.put(None)
+        await forwarder
+
+        await status_callback("done", f'Task complete: "{goal}"')
+
+    except Exception as exc:
+        logging.exception("Chat agent error for session %s", session_id)
+        await status_callback("error", f"Agent error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# /chat-sessions  — return history for a session (or all sessions)
+# ---------------------------------------------------------------------------
+@app.get("/chat-sessions")
+def get_chat_sessions():
+    return chat_sessions
+
+
+@app.get("/chat-sessions/{session_id}")
+def get_chat_session(session_id: str):
+    if session_id not in chat_sessions:
+        return {"error": "session not found"}
+    return chat_sessions[session_id]
+
+
+# ---------------------------------------------------------------------------
+# /resolve-escalation  (unchanged)
+# ---------------------------------------------------------------------------
 class EscalationResolution(BaseModel):
     action_id: str
     decision: str
+
 
 @app.post("/resolve-escalation")
 def resolve_escalation(payload: EscalationResolution):
@@ -74,6 +243,10 @@ def resolve_escalation(payload: EscalationResolution):
         return {"status": "success"}
     return {"status": "not found"}
 
+
+# ---------------------------------------------------------------------------
+# WebSocket broadcaster
+# ---------------------------------------------------------------------------
 async def broadcaster():
     while True:
         payload = await action_queue.get()
@@ -91,12 +264,13 @@ async def broadcaster():
             if conn in active_connections:
                 active_connections.remove(conn)
 
-        # Avoid a tight loop when many payloads appear consecutively.
-        await asyncio.sleep(1)
+        await asyncio.sleep(0)   # yield — no artificial 1 s delay for chat events
+
 
 @app.on_event("startup")
 async def start_broadcaster():
     asyncio.create_task(broadcaster())
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):

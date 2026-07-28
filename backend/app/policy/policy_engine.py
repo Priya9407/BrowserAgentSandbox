@@ -3,30 +3,52 @@ policy_engine.py
 
 The core security engine of Frontier.
 
-Responsibilities
-----------------
-1. Run the instruction-source classifier  (WHERE did this come from?)
-2. Classify browser action into a risk category
-3. Determine risk level (LOW / MEDIUM / HIGH / CRITICAL)
-4. Detect hidden content
-5. Combine origin + risk → ALLOW / DENY / ESCALATE
-6. Return PolicyResult
+Tripwire mode (Milestone 1 B)
+------------------------------
+The full provenance / origin check is expensive and adds latency.
+For a real demo with ordinary tasks (search, navigate, read prices)
+the vast majority of actions are NAVIGATION or FORM_FILL — running
+the full source classifier on every one clutters the UI and adds
+latency without adding safety value.
 
-Decision matrix
----------------
-origin=hidden_page_content                → always ESCALATE minimum, DENY if high/critical risk
+Tripwire rule:
+  - NAVIGATION / FORM_FILL / UNKNOWN  → lightweight pass
+    (risk-level only, skip source classifier + topic drift,
+    ALLOW immediately unless hidden content is on the page)
+  - CREDENTIAL / PAYMENT / SEND / DELETE / DOWNLOAD / FILE_UPLOAD
+    → full provenance check (source classifier + topic drift + origin-aware decision)
+
+Normal tasks sail through cleanly. The full machinery only fires
+when it actually matters.
+
+Decision matrix (sensitive actions only)
+-----------------------------------------
+topic_drift                               → DENY if critical, else ESCALATE
+origin=hidden_page_content                → DENY if critical, else ESCALATE
+hidden_content_detected (page heuristic)  → DENY if DELETE, else ESCALATE
 origin=visible_page_content + high risk   → ESCALATE
-origin=user_task                          → normal risk-based rules apply
+origin=user_task                          → normal risk rules
 """
 
 from app.schemas.action_schema import AgentAction
 
 from app.policy.classifier import RiskClassifier
 from app.policy.source_classifier import SourceClassifier
+from app.policy.topic_drift import TopicDriftDetector
 from app.policy.risk_taxonomy import RiskCategory, get_risk_level
 from app.policy.decision import PolicyDecision
 from app.policy.models import Origin, PolicyResult
-from app.policy.topic_drift import TopicDriftDetector
+
+
+# Only these categories get the full provenance treatment.
+_SENSITIVE = {
+    RiskCategory.CREDENTIAL,
+    RiskCategory.PAYMENT,
+    RiskCategory.SEND,
+    RiskCategory.DELETE,
+    RiskCategory.DOWNLOAD,
+    RiskCategory.FILE_UPLOAD,
+}
 
 
 class PolicyEngine:
@@ -45,10 +67,34 @@ class PolicyEngine:
     ) -> PolicyResult:
 
         # ------------------------------------
-        # STEP 1
-        # Classify instruction source (origin)
+        # STEP 1 — Risk category + level (always runs, cheap)
         # ------------------------------------
+        category = self.classifier.classify(action)
+        risk_level = get_risk_level(category)
 
+        # ------------------------------------
+        # STEP 2 — Tripwire gate
+        # Non-sensitive + no hidden content on page → ALLOW immediately.
+        # Skip source classifier and topic drift entirely.
+        # ------------------------------------
+        if category not in _SENSITIVE and not hidden_content_detected:
+            return PolicyResult(
+                action_id=action.action_id,
+                risk_category=category,
+                risk_level=risk_level,
+                decision=PolicyDecision.ALLOW,
+                hidden_content_detected=False,
+                topic_drift_detected=False,
+                origin=Origin.USER_TASK,
+                reason="Low/medium-risk action — lightweight pass.",
+                metadata={"target": action.target, "action_type": action.action_type},
+            )
+
+        # ------------------------------------
+        # STEP 3 — Full provenance check
+        # Reaches here only for sensitive action types
+        # OR when hidden content was detected on the page.
+        # ------------------------------------
         origin = self.source_classifier.classify(
             cited_source_text=action.cited_source_text,
             user_task=user_task,
@@ -56,24 +102,6 @@ class PolicyEngine:
             hidden_page_text=hidden_page_text,
         )
 
-        # ------------------------------------
-        # STEP 2
-        # Classify the action into a risk category
-        # ------------------------------------
-
-        category = self.classifier.classify(action)
-
-        # ------------------------------------
-        # STEP 3
-        # Convert to LOW / MEDIUM / HIGH / CRITICAL
-        # ------------------------------------
-
-        risk_level = get_risk_level(category)
-
-        # ------------------------------------
-        # STEP 3.5
-        # Detect Topic Drift
-        # ------------------------------------
         topic_drift_detected = self.topic_drift_detector.detect(
             user_task=user_task,
             reasoning=action.reasoning,
@@ -81,23 +109,14 @@ class PolicyEngine:
         )
 
         # ------------------------------------
-        # STEP 4
-        # Decide — origin tightens the outcome
+        # STEP 4 — Decision
         # ------------------------------------
-
         decision = self._decide(category, hidden_content_detected, origin, topic_drift_detected)
 
         # ------------------------------------
-        # STEP 5
-        # Build human-readable explanation
+        # STEP 5 — Human-readable reason
         # ------------------------------------
-
         reason = self._reason(category, decision, hidden_content_detected, origin, topic_drift_detected)
-
-        # ------------------------------------
-        # STEP 6
-        # Return result
-        # ------------------------------------
 
         return PolicyResult(
             action_id=action.action_id,
@@ -108,14 +127,11 @@ class PolicyEngine:
             topic_drift_detected=topic_drift_detected,
             origin=origin,
             reason=reason,
-            metadata={
-                "target": action.target,
-                "action_type": action.action_type,
-            },
+            metadata={"target": action.target, "action_type": action.action_type},
         )
 
     # ------------------------------------------------------------------
-    # Decision logic
+    # Decision logic (sensitive actions only)
     # ------------------------------------------------------------------
 
     def _decide(
@@ -125,96 +141,40 @@ class PolicyEngine:
         origin: Origin,
         topic_drift: bool = False,
     ) -> PolicyDecision:
-        
-        # --------------------------------------------------
-        # Semantic Topic Drift Detected
-        # The agent's reasoning is semantically unrelated to
-        # the user's task. Block/Escalate immediately.
-        # --------------------------------------------------
+
+        _critical = {RiskCategory.CREDENTIAL, RiskCategory.PAYMENT,
+                     RiskCategory.SEND, RiskCategory.DELETE}
+
+        # Semantic topic drift — reasoning unrelated to user's task.
         if topic_drift:
-            if category in (
-                RiskCategory.CREDENTIAL,
-                RiskCategory.PAYMENT,
-                RiskCategory.SEND,
-                RiskCategory.DELETE,
-            ):
-                return PolicyDecision.DENY
-            return PolicyDecision.ESCALATE
+            return PolicyDecision.DENY if category in _critical else PolicyDecision.ESCALATE
 
-        # --------------------------------------------------
-        # Instruction came from HIDDEN page text
-        # Even if the page element isn't flagged by the
-        # heuristic detector, the cited text itself traces
-        # back to hidden content — never auto-trust.
-        # --------------------------------------------------
-
+        # Cited text traces back to hidden DOM content.
         if origin == Origin.HIDDEN_PAGE_CONTENT:
-            if category in (
-                RiskCategory.CREDENTIAL,
-                RiskCategory.PAYMENT,
-                RiskCategory.SEND,
-                RiskCategory.DELETE,
-            ):
-                return PolicyDecision.DENY
-            return PolicyDecision.ESCALATE
+            return PolicyDecision.DENY if category in _critical else PolicyDecision.ESCALATE
 
-        # --------------------------------------------------
-        # Hidden DOM content detected on page, but NOT cited
-        # The page is actively trying to hide instructions,
-        # but the agent successfully ignored them. Escalate
-        # for human review rather than blindly denying.
-        # --------------------------------------------------
-
+        # Page has hidden elements (heuristic detector), agent didn't cite them.
         if hidden:
-            if category == RiskCategory.DELETE:
-                return PolicyDecision.DENY
-            return PolicyDecision.ESCALATE
+            return PolicyDecision.DENY if category == RiskCategory.DELETE else PolicyDecision.ESCALATE
 
-        # --------------------------------------------------
-        # Instruction came from VISIBLE page text
-        # The page may be legitimately guiding the agent, but
-        # page content is never a trusted authority for
-        # high-risk actions — require human sign-off.
-        # --------------------------------------------------
-
+        # Reasoning comes from visible page text (not user's own words).
         if origin == Origin.VISIBLE_PAGE_CONTENT:
-            if category in (
-                RiskCategory.CREDENTIAL,
-                RiskCategory.PAYMENT,
-                RiskCategory.DOWNLOAD,
-                RiskCategory.FILE_UPLOAD,
-                RiskCategory.SEND,
-                RiskCategory.DELETE,
-            ):
+            if category in (RiskCategory.CREDENTIAL, RiskCategory.PAYMENT,
+                            RiskCategory.DOWNLOAD, RiskCategory.FILE_UPLOAD,
+                            RiskCategory.SEND, RiskCategory.DELETE):
                 return PolicyDecision.ESCALATE
-            # Low/medium risk from visible content is fine
             return PolicyDecision.ALLOW
 
-        # --------------------------------------------------
-        # Instruction came from the USER'S OWN TASK
-        # Normal risk-based rules apply.
-        # --------------------------------------------------
-
-        if category == RiskCategory.NAVIGATION:
-            return PolicyDecision.ALLOW
-
-        if category == RiskCategory.FORM_FILL:
-            return PolicyDecision.ALLOW
-
-        if category in (
-            RiskCategory.CREDENTIAL,
-            RiskCategory.PAYMENT,
-            RiskCategory.DOWNLOAD,
-            RiskCategory.FILE_UPLOAD,
-            RiskCategory.SEND,
-        ):
+        # Origin is USER_TASK — normal risk rules apply.
+        if category in (RiskCategory.CREDENTIAL, RiskCategory.PAYMENT,
+                        RiskCategory.DOWNLOAD, RiskCategory.FILE_UPLOAD,
+                        RiskCategory.SEND):
             return PolicyDecision.ESCALATE
 
         if category == RiskCategory.DELETE:
             return PolicyDecision.DENY
 
-        # Unknown action — escalate to be safe
-        return PolicyDecision.ESCALATE
+        return PolicyDecision.ESCALATE  # unknown sensitive type, be safe
 
     # ------------------------------------------------------------------
     # Reason builder
@@ -228,12 +188,12 @@ class PolicyEngine:
         origin: Origin,
         topic_drift: bool = False,
     ) -> str:
-        
+
         if topic_drift:
             return (
-                "Semantic Topic Drift Detected: The agent's reasoning or cited text "
-                "is completely unrelated to the user's original task. This indicates "
-                "a possible prompt injection attack via visible page content."
+                "Semantic topic drift detected: the agent's reasoning is unrelated "
+                "to the user's original task. Possible prompt injection via visible "
+                "page content."
             )
 
         if origin == Origin.HIDDEN_PAGE_CONTENT:
@@ -251,25 +211,17 @@ class PolicyEngine:
             )
 
         if origin == Origin.VISIBLE_PAGE_CONTENT:
-            base = (
-                "The agent's reasoning originates from visible page text, "
-                "not the user's original task. "
-            )
+            base = "The agent's reasoning originates from visible page text, not the user's original task. "
             if decision == PolicyDecision.ESCALATE:
-                return base + "Human approval required before a high-risk page-sourced action is executed."
-            return base + "Action is low-risk and within scope."
+                return base + "Human approval required before this high-risk page-sourced action executes."
+            return base + "Action is within acceptable risk for page-sourced instructions."
 
-        # origin == USER_TASK — normal explanations
-        explanations = {
-            RiskCategory.NAVIGATION: "Navigation action rooted in the user's task. Safe to execute.",
-            RiskCategory.FORM_FILL: "Form-fill action rooted in the user's task. Safe to execute.",
-            RiskCategory.CREDENTIAL: "Credential entry requires explicit user approval.",
-            RiskCategory.PAYMENT: "Payment action requires explicit user approval.",
-            RiskCategory.DOWNLOAD: "Download requires user approval.",
+        # USER_TASK origin
+        return {
+            RiskCategory.CREDENTIAL:  "Credential entry requires explicit user approval.",
+            RiskCategory.PAYMENT:     "Payment action requires explicit user approval.",
+            RiskCategory.DOWNLOAD:    "Download requires user approval.",
             RiskCategory.FILE_UPLOAD: "File upload requires user approval.",
-            RiskCategory.SEND: "Sending data requires user approval.",
-            RiskCategory.DELETE: "Delete operations are blocked by policy.",
-            RiskCategory.UNKNOWN: "Unknown action type — escalating to be safe.",
-        }
-
-        return explanations.get(category, "No reason available.")
+            RiskCategory.SEND:        "Sending data requires user approval.",
+            RiskCategory.DELETE:      "Delete operations are blocked by policy.",
+        }.get(category, "Sensitive action requires user approval.")
