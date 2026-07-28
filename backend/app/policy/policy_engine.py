@@ -26,12 +26,14 @@ from app.policy.source_classifier import SourceClassifier
 from app.policy.risk_taxonomy import RiskCategory, get_risk_level
 from app.policy.decision import PolicyDecision
 from app.policy.models import Origin, PolicyResult
+from app.policy.topic_drift import TopicDriftDetector
 
 
 class PolicyEngine:
     def __init__(self):
         self.classifier = RiskClassifier()
         self.source_classifier = SourceClassifier()
+        self.topic_drift_detector = TopicDriftDetector()
 
     def evaluate(
         self,
@@ -69,18 +71,28 @@ class PolicyEngine:
         risk_level = get_risk_level(category)
 
         # ------------------------------------
+        # STEP 3.5
+        # Detect Topic Drift
+        # ------------------------------------
+        topic_drift_detected = self.topic_drift_detector.detect(
+            user_task=user_task,
+            reasoning=action.reasoning,
+            cited_source_text=action.cited_source_text,
+        )
+
+        # ------------------------------------
         # STEP 4
         # Decide — origin tightens the outcome
         # ------------------------------------
 
-        decision = self._decide(category, hidden_content_detected, origin)
+        decision = self._decide(category, hidden_content_detected, origin, topic_drift_detected)
 
         # ------------------------------------
         # STEP 5
         # Build human-readable explanation
         # ------------------------------------
 
-        reason = self._reason(category, decision, hidden_content_detected, origin)
+        reason = self._reason(category, decision, hidden_content_detected, origin, topic_drift_detected)
 
         # ------------------------------------
         # STEP 6
@@ -93,6 +105,7 @@ class PolicyEngine:
             risk_level=risk_level,
             decision=decision,
             hidden_content_detected=hidden_content_detected,
+            topic_drift_detected=topic_drift_detected,
             origin=origin,
             reason=reason,
             metadata={
@@ -110,7 +123,23 @@ class PolicyEngine:
         category: RiskCategory,
         hidden: bool,
         origin: Origin,
+        topic_drift: bool = False,
     ) -> PolicyDecision:
+        
+        # --------------------------------------------------
+        # Semantic Topic Drift Detected
+        # The agent's reasoning is semantically unrelated to
+        # the user's task. Block/Escalate immediately.
+        # --------------------------------------------------
+        if topic_drift:
+            if category in (
+                RiskCategory.CREDENTIAL,
+                RiskCategory.PAYMENT,
+                RiskCategory.SEND,
+                RiskCategory.DELETE,
+            ):
+                return PolicyDecision.DENY
+            return PolicyDecision.ESCALATE
 
         # --------------------------------------------------
         # Instruction came from HIDDEN page text
@@ -197,7 +226,15 @@ class PolicyEngine:
         decision: PolicyDecision,
         hidden: bool,
         origin: Origin,
+        topic_drift: bool = False,
     ) -> str:
+        
+        if topic_drift:
+            return (
+                "Semantic Topic Drift Detected: The agent's reasoning or cited text "
+                "is completely unrelated to the user's original task. This indicates "
+                "a possible prompt injection attack via visible page content."
+            )
 
         if origin == Origin.HIDDEN_PAGE_CONTENT:
             return (

@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 const DECISION_CLASS = {
   ALLOW: "decision-allow",
   DENY: "decision-deny",
@@ -5,6 +7,18 @@ const DECISION_CLASS = {
 };
 
 export default function ActionFeed({ actions, selectedId, onSelect }) {
+  const [resolved, setResolved] = useState({});
+
+  const handleResolve = async (e, action_id, decision) => {
+    e.stopPropagation();
+    setResolved({ ...resolved, [action_id]: decision });
+    await fetch("http://localhost:8000/resolve-escalation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action_id, decision })
+    });
+  };
+
   return (
     <div className="panel">
       <h2>Action Feed</h2>
@@ -18,6 +32,9 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
           const isSelected = action.action_id === selectedId;
           const decisionClass =
             DECISION_CLASS[policy.decision] || "decision-unknown";
+          
+          const isPending = policy.decision === "ESCALATE" && !resolved[action.action_id];
+          const resolution = resolved[action.action_id];
 
           return (
             <li
@@ -30,7 +47,7 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
               <div className="action-item-row">
                 <span className="action-type">{action.action_type}</span>
                 <span className={`badge ${decisionClass}`}>
-                  {policy.decision}
+                  {resolution ? resolution.toUpperCase() : policy.decision}
                 </span>
               </div>
               <div className="action-target">{action.target}</div>
@@ -41,7 +58,27 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
                 {policy.hidden_content_detected && (
                   <span className="hidden-flag">⚠ hidden content</span>
                 )}
+                {policy.topic_drift_detected && (
+                  <span className="hidden-flag">⚠ topic drift</span>
+                )}
               </div>
+              
+              {isPending && (
+                <div className="approval-controls" style={{marginTop: '10px', display: 'flex', gap: '10px'}}>
+                  <button 
+                    onClick={(e) => handleResolve(e, action.action_id, 'approved')}
+                    style={{background: '#16a34a', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                  >
+                    Approve
+                  </button>
+                  <button 
+                    onClick={(e) => handleResolve(e, action.action_id, 'denied')}
+                    style={{background: '#dc2626', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                  >
+                    Deny
+                  </button>
+                </div>
+              )}
             </li>
           );
         })}

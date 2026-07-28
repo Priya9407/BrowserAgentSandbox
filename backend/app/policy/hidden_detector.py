@@ -105,6 +105,31 @@ class HiddenContentDetector:
                     reasons.push("scale(0)");
 
                 // -----------------------
+                // ARIA-Hidden
+                // -----------------------
+                
+                if (el.getAttribute("aria-hidden") === "true")
+                    reasons.push("aria-hidden");
+
+                // -----------------------
+                // Color Matching
+                // -----------------------
+                
+                if (el.innerText && el.innerText.trim().length > 0) {
+                    if (style.color !== "rgba(0, 0, 0, 0)" && style.color === style.backgroundColor) {
+                        reasons.push("color-matching");
+                    }
+                }
+
+                // -----------------------
+                // Z-Index Layering
+                // -----------------------
+                
+                if (parseInt(style.zIndex, 10) < 0 && style.position === "absolute") {
+                    reasons.push("z-index-hidden");
+                }
+
+                // -----------------------
 
                 if (reasons.length > 0) {
 

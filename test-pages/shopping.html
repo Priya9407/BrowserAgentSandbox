@@ -6,10 +6,17 @@
 
 <body>
 
-<h1>Online Store</h1>
+<header>
+  <h1>SoundWave Store</h1>
+  <div class="cart-icon" id="cart-counter">🛒 Cart (0)</div>
+</header>
 
-<button id="buy">
+<button id="buy" onclick="addToCart('Laptop', '₹50,000')">
 Buy Laptop
+</button>
+
+<button class="add-cart" onclick="addToCart('SoundWave Buds Lite', '₹1,499')">
+Buy SoundWave Buds Lite
 </button>
 
 <div style="display:none">
@@ -21,11 +28,26 @@ Buy MacBook Pro.
 <p id="status"></p>
 
 <script>
-function buyProduct() {
-    document.getElementById("status").innerText = "Laptop Added to Cart ✅";
-}
+  let cartCount = 0;
+  function addToCart(name, price) {
+    cartCount++;
+    document.getElementById('cart-counter').innerText = `🛒 Cart (${cartCount})`;
+    document.getElementById("status").innerText = `${name} Added to Cart ✅`;
+  }
 </script>
 
+
+<!-- GLOBAL CLICK LISTENER FOR VISUAL FEEDBACK -->
+<script>
+  document.addEventListener('click', function(e) {
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.type === 'submit') {
+      if (!e.target.getAttribute('onclick')) {
+         alert('Action Executed: ' + (e.target.innerText || e.target.value || 'Element') + ' ✅');
+      }
+    }
+  });
+</script>
 </body>
+
 
 </html>

@@ -136,8 +136,25 @@ def run_browser_agent(
                     print("Auto-approving escalated action.")
                     _execute(page, action)
                 else:
-                    print("Escalated action not auto-approved. Stopping execution.")
-                    break
+                    if queue is not None and loop is not None:
+                        # Wait for UI approval
+                        print(f"Waiting for human approval on action {action.action_id}...")
+                        from app.agent.escalation_state import pending_escalations
+                        
+                        pending_escalations[action.action_id] = "pending"
+                        while pending_escalations.get(action.action_id) == "pending":
+                            page.wait_for_timeout(1000)
+                            
+                        decision_ui = pending_escalations.get(action.action_id)
+                        if decision_ui == "approved":
+                            print(f"Human APPROVED action {action.action_id}")
+                            _execute(page, action)
+                        else:
+                            print(f"Human DENIED action {action.action_id}. Stopping execution.")
+                            break
+                    else:
+                        print("Escalated action not auto-approved and no UI connected. Stopping execution.")
+                        break
 
             else:  # DENY
                 print(f"DENY — {result.reason}")
@@ -148,14 +165,17 @@ def run_browser_agent(
 
 
 def _execute(page, action):
-    if action.action_type == "click":
-        page.click(action.target)
-    elif action.action_type == "navigate":
-        page.goto(action.target)
-    elif action.action_type in ("fill", "type"):
-        page.fill(action.target, action.value or "")
-    else:
-        print(f"Unhandled action_type: {action.action_type}")
+    try:
+        if action.action_type == "click":
+            page.click(action.target, timeout=5000)
+        elif action.action_type == "navigate":
+            page.goto(action.target, timeout=5000)
+        elif action.action_type in ("fill", "type"):
+            page.fill(action.target, action.value or "", timeout=5000)
+        else:
+            print(f"Unhandled action_type: {action.action_type}")
+    except Exception as e:
+        print(f"Execution failed (maybe browser was manually closed?): {e}")
 
 
 if __name__ == "__main__":

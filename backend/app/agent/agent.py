@@ -28,8 +28,9 @@ class BrowserAgent:
             history=self.history,
         )
 
+        import uuid
         action = AgentAction(
-            action_id=str(self.step_count),
+            action_id=str(uuid.uuid4()),
             action_type=result["action_type"],
             target=result["target"],
             reasoning=result["reasoning"],
