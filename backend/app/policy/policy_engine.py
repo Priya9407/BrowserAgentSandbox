@@ -113,23 +113,6 @@ class PolicyEngine:
     ) -> PolicyDecision:
 
         # --------------------------------------------------
-        # Hidden DOM content detected on page
-        # The page is actively trying to hide instructions —
-        # block any high/critical action outright, escalate
-        # everything else so the human can see what happened.
-        # --------------------------------------------------
-
-        if hidden:
-            if category in (
-                RiskCategory.CREDENTIAL,
-                RiskCategory.PAYMENT,
-                RiskCategory.SEND,
-                RiskCategory.DELETE,
-            ):
-                return PolicyDecision.DENY
-            return PolicyDecision.ESCALATE
-
-        # --------------------------------------------------
         # Instruction came from HIDDEN page text
         # Even if the page element isn't flagged by the
         # heuristic detector, the cited text itself traces
@@ -143,6 +126,18 @@ class PolicyEngine:
                 RiskCategory.SEND,
                 RiskCategory.DELETE,
             ):
+                return PolicyDecision.DENY
+            return PolicyDecision.ESCALATE
+
+        # --------------------------------------------------
+        # Hidden DOM content detected on page, but NOT cited
+        # The page is actively trying to hide instructions,
+        # but the agent successfully ignored them. Escalate
+        # for human review rather than blindly denying.
+        # --------------------------------------------------
+
+        if hidden:
+            if category == RiskCategory.DELETE:
                 return PolicyDecision.DENY
             return PolicyDecision.ESCALATE
 
@@ -204,18 +199,18 @@ class PolicyEngine:
         origin: Origin,
     ) -> str:
 
-        if hidden:
-            return (
-                "Hidden HTML/CSS content detected on the page. "
-                "Action blocked or escalated: the page may be attempting "
-                "a prompt-injection attack via concealed DOM elements."
-            )
-
         if origin == Origin.HIDDEN_PAGE_CONTENT:
             return (
                 "The agent's cited reasoning traces back to hidden page content "
                 "(display:none, off-screen, zero-opacity, or similar). "
                 "Instructions from hidden elements are never auto-trusted."
+            )
+
+        if hidden:
+            return (
+                "Hidden HTML/CSS content detected on the page. "
+                "The agent successfully ignored the injection, but the action is "
+                "escalated for human review due to suspicious page structure."
             )
 
         if origin == Origin.VISIBLE_PAGE_CONTENT:
