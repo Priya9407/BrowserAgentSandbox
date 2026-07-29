@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Frontier Agent</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="panel">
+
+    <!-- ── Header ──────────────────────────────────────────────────── -->
+    <header class="panel-header">
+      <div class="panel-title-row">
+        <span class="panel-title">Frontier Agent</span>
+        <div class="header-right">
+          <!-- WebSocket connection dot -->
+          <span id="ws-dot"   class="dot dot-yellow" title="Connecting…"></span>
+          <span id="ws-label" class="dot-label">Connecting…</span>
+        </div>
+      </div>
+
+      <!-- Current tab context pill -->
+      <div id="tab-context-row" class="tab-context-row">
+        <span class="tab-context-icon">🌐</span>
+        <span id="tab-url-label" class="tab-url-label">Loading tab…</span>
+        <button id="refresh-context-btn" class="icon-btn" title="Refresh tab context">↻</button>
+      </div>
+    </header>
+
+    <!-- ── Message thread ──────────────────────────────────────────── -->
+    <div id="messages" class="messages" aria-live="polite" aria-label="Agent conversation"></div>
+
+    <!-- ── CAPTCHA pause banner (hidden by default) ────────────────── -->
+    <div id="captcha-banner" class="captcha-banner hidden" role="alert">
+      <span class="captcha-icon">⏸</span>
+      <span class="captcha-text">CAPTCHA detected — solve it in the tab, then click Resume.</span>
+      <button id="captcha-resume-btn" class="captcha-resume-btn">Resume</button>
+    </div>
+
+    <!-- ── Input bar ────────────────────────────────────────────────── -->
+    <div class="input-bar">
+      <textarea
+        id="goal-input"
+        class="goal-input"
+        rows="2"
+        placeholder="What should the agent do on this tab?"
+        aria-label="Task goal"
+      ></textarea>
+      <button id="send-btn" class="send-btn" disabled>Send</button>
+    </div>
+
+  </div><!-- /.panel -->
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

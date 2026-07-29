@@ -1,0 +1,304 @@
+/* ============================================================
+   sidepanel.css — Frontier Agent Extension Side Panel
+   No build step. Plain CSS loaded by sidepanel.html.
+   Design tokens match the main dashboard (App.css).
+   ============================================================ */
+
+/* ── Tokens ──────────────────────────────────────────────── */
+:root {
+  --yellow:        #ffb703;
+  --yellow-light:  #fff8e1;
+  --yellow-border: #ffd85e;
+  --yellow-text:   #7a5c00;
+
+  --green:  #06d6a0;
+  --red:    #ff5daa;
+
+  --bg:          #fffaf0;
+  --surface:     #ffffff;
+  --border:      #f0e6c8;
+  --text:        #2f2b23;
+  --text-muted:  #a89a6d;
+  --text-faint:  #c4b896;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
+  --shadow: 0 2px 8px rgba(255,183,3,0.08);
+}
+
+/* ── Reset ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin:  0;
+  padding: 0;
+  height:  100%;
+  background: var(--bg);
+  color:   var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+/* ── Panel shell ─────────────────────────────────────────── */
+.panel {
+  display:        flex;
+  flex-direction: column;
+  height:         100vh;
+  overflow:       hidden;
+}
+
+/* ── Header ──────────────────────────────────────────────── */
+.panel-header {
+  flex-shrink: 0;
+  background:  var(--surface);
+  border-bottom: 2px solid var(--yellow);
+  padding: 10px 14px 8px;
+}
+
+.panel-title-row {
+  display:         flex;
+  justify-content: space-between;
+  align-items:     center;
+  margin-bottom:   6px;
+}
+
+.panel-title {
+  font-size:   15px;
+  font-weight: 900;
+  color:       var(--yellow);
+  letter-spacing: -0.2px;
+}
+
+.header-right {
+  display:     flex;
+  align-items: center;
+  gap:         6px;
+}
+
+/* Connection dot */
+.dot {
+  width:         8px;
+  height:        8px;
+  border-radius: 50%;
+  flex-shrink:   0;
+}
+.dot-green  { background: #06d6a0; }
+.dot-yellow { background: #ffb703; }
+.dot-red    { background: #ff5daa; }
+
+.dot-label {
+  font-size:   11px;
+  font-weight: 600;
+  color:       var(--text-muted);
+}
+
+/* Tab context pill */
+.tab-context-row {
+  display:     flex;
+  align-items: center;
+  gap:         6px;
+  background:  var(--yellow-light);
+  border:      1px solid var(--yellow-border);
+  border-radius: 999px;
+  padding:     4px 10px;
+}
+
+.tab-context-icon {
+  font-size:  13px;
+  flex-shrink: 0;
+}
+
+.tab-url-label {
+  flex:          1;
+  font-size:     11px;
+  font-weight:   600;
+  color:         var(--yellow-text);
+  white-space:   nowrap;
+  overflow:      hidden;
+  text-overflow: ellipsis;
+  max-width:     180px;
+}
+
+.icon-btn {
+  background:    none;
+  border:        none;
+  cursor:        pointer;
+  font-size:     14px;
+  color:         var(--yellow-text);
+  padding:       0 2px;
+  line-height:   1;
+  flex-shrink:   0;
+  transition:    transform 0.15s;
+}
+.icon-btn:hover { transform: rotate(30deg); }
+
+/* ── Message thread ──────────────────────────────────────── */
+.messages {
+  flex:       1;
+  overflow-y: auto;
+  padding:    14px 14px 8px;
+  display:    flex;
+  flex-direction: column;
+  gap:        8px;
+  scroll-behavior: smooth;
+}
+
+/* ── User bubble ─────────────────────────────────────────── */
+.bubble {
+  max-width:   84%;
+  padding:     9px 13px;
+  border-radius: var(--radius-lg);
+  font-size:   13px;
+  line-height: 1.45;
+  word-break:  break-word;
+}
+
+.bubble-user {
+  align-self:               flex-end;
+  background:               var(--yellow);
+  color:                    #3a2900;
+  font-weight:              600;
+  border-bottom-right-radius: 4px;
+}
+
+/* ── Status lines ────────────────────────────────────────── */
+.status-line {
+  display:     flex;
+  align-items: flex-start;
+  gap:         8px;
+  font-size:   12px;
+  line-height: 1.45;
+  padding:     4px 0;
+}
+
+.status-icon {
+  flex-shrink: 0;
+  font-size:   14px;
+  line-height: 1.3;
+}
+
+.status-text { color: var(--text); }
+
+/* Per-status colours */
+.status-planning .status-text { color: #8a6a00; font-weight: 600; }
+.status-step     .status-text { color: var(--text-muted); }
+.status-done     .status-text { color: #007a5a; font-weight: 700; }
+.status-error    .status-text { color: #c0004a; font-weight: 600; }
+
+/* Typing indicator */
+.typing-row { opacity: 0.75; }
+
+.typing-dots {
+  display:     flex;
+  gap:         4px;
+  align-items: center;
+  height:      16px;
+}
+
+.typing-dots span {
+  display:       block;
+  width:         5px;
+  height:        5px;
+  border-radius: 50%;
+  background:    var(--text-muted);
+  animation:     bounce 1.2s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: translateY(0);    }
+  40%           { transform: translateY(-4px); }
+}
+
+/* ── CAPTCHA banner ──────────────────────────────────────── */
+.captcha-banner {
+  flex-shrink:   0;
+  display:       flex;
+  align-items:   center;
+  gap:           8px;
+  background:    #fff8ec;
+  border-top:    1px solid #e08a00;
+  border-bottom: 1px solid #e08a00;
+  padding:       8px 12px;
+}
+
+.captcha-banner.hidden { display: none; }
+
+.captcha-icon { font-size: 15px; flex-shrink: 0; }
+
+.captcha-text {
+  flex:        1;
+  font-size:   12px;
+  font-weight: 600;
+  color:       #8a5700;
+}
+
+.captcha-resume-btn {
+  flex-shrink:   0;
+  border:        none;
+  border-radius: 999px;
+  background:    #e08a00;
+  color:         #fff;
+  font-size:     11px;
+  font-weight:   800;
+  padding:       5px 12px;
+  cursor:        pointer;
+  white-space:   nowrap;
+}
+.captcha-resume-btn:hover { background: #c67800; }
+
+/* ── Input bar ───────────────────────────────────────────── */
+.input-bar {
+  flex-shrink:  0;
+  display:      flex;
+  align-items:  flex-end;
+  gap:          8px;
+  padding:      8px 12px 12px;
+  border-top:   1px solid var(--border);
+  background:   var(--surface);
+}
+
+.goal-input {
+  flex:          1;
+  resize:        none;
+  border:        1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding:       8px 11px;
+  font-size:     13px;
+  font-family:   inherit;
+  line-height:   1.4;
+  color:         var(--text);
+  background:    var(--bg);
+  outline:       none;
+  max-height:    100px;
+  overflow-y:    auto;
+  transition:    border-color 0.15s;
+}
+.goal-input:focus    { border-color: var(--yellow); }
+.goal-input:disabled { opacity: 0.55; }
+
+.send-btn {
+  flex-shrink:   0;
+  background:    var(--yellow);
+  border:        none;
+  border-radius: var(--radius-md);
+  padding:       8px 16px;
+  font-size:     13px;
+  font-weight:   700;
+  color:         #3a2900;
+  cursor:        pointer;
+  align-self:    flex-end;
+  transition:    background 0.15s, transform 0.1s;
+  white-space:   nowrap;
+}
+.send-btn:hover:not(:disabled) {
+  background: #ffa200;
+  transform:  translateY(-1px);
+}
+.send-btn:disabled {
+  opacity: 0.45;
+  cursor:  not-allowed;
+}

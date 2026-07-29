@@ -314,3 +314,291 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         if ws in active_connections:
             active_connections.remove(ws)
+
+
+# ---------------------------------------------------------------------------
+# Extension WebSocket connections (separate list from the dashboard /ws)
+#
+# The browser extension connects here instead of /ws so we can:
+#   a) apply a chrome-extension:// origin check without affecting the
+#      dashboard's permissive CORS policy
+#   b) keep extension sessions independently addressable
+#
+# Allowed origins:
+#   chrome-extension://*   — any locally-loaded or store-installed extension
+#   http://localhost:*     — local dev / Vitest
+#   null                   — some browsers send "null" for extension pages
+# ---------------------------------------------------------------------------
+
+extension_connections: list[WebSocket] = []
+
+# Extension queues mirror action_queue but route only to extension clients.
+# We reuse _broadcast() which writes to action_queue; the extension broadcaster
+# below forwards from the same queue to extension_connections only when the
+# payload carries type="ext_*". For simplicity we use a dedicated queue so
+# there is zero cross-talk with the dashboard.
+ext_queue: asyncio.Queue = asyncio.Queue()
+
+
+def _is_allowed_extension_origin(origin: str | None) -> bool:
+    """
+    Return True if the WebSocket handshake Origin header looks like it
+    came from a Chrome extension or local dev environment.
+    Rejects arbitrary external origins.
+    """
+    if origin is None:
+        return True          # no origin header — local tool / curl
+    if origin == "null":
+        return True          # some browsers send literal "null" for ext pages
+    if origin.startswith("chrome-extension://"):
+        return True
+    if origin.startswith("http://localhost"):
+        return True
+    if origin.startswith("http://127.0.0.1"):
+        return True
+    return False
+
+
+async def _ext_broadcast(payload: dict):
+    """Push a payload to all connected extension side panels."""
+    await ext_queue.put(payload)
+
+
+async def _ext_broadcaster():
+    while True:
+        payload = await ext_queue.get()
+        message = json.dumps(payload)
+        dead = []
+        for conn in extension_connections:
+            try:
+                await conn.send_text(message)
+            except Exception as exc:
+                logging.warning("Extension WS send failed: %s", exc)
+                dead.append(conn)
+        for conn in dead:
+            if conn in extension_connections:
+                extension_connections.remove(conn)
+        await asyncio.sleep(0)
+
+
+@app.on_event("startup")
+async def start_ext_broadcaster():
+    asyncio.create_task(_ext_broadcaster())
+
+
+@app.websocket("/extension/ws")
+async def extension_ws_endpoint(ws: WebSocket):
+    """
+    Dedicated WebSocket for the browser extension side panel.
+
+    The standard /ws endpoint uses allow_origins=["*"] (set by CORSMiddleware)
+    which is fine for the dashboard served from localhost.  Extension pages
+    have a chrome-extension:// origin that we want to explicitly allow here
+    while still rejecting arbitrary third-party origins.
+
+    FastAPI's WebSocket.accept() does not perform an Origin check on its own,
+    so we do it manually before accepting.
+    """
+    origin = ws.headers.get("origin")
+    if not _is_allowed_extension_origin(origin):
+        logging.warning("Extension WS rejected — disallowed origin: %s", origin)
+        await ws.close(code=1008)   # Policy Violation
+        return
+
+    await ws.accept()
+    extension_connections.append(ws)
+    logging.info("Extension WS connected (origin=%s, total=%d)", origin, len(extension_connections))
+
+    try:
+        while True:
+            await ws.receive_text()   # keep-alive; extension sends pings
+    except WebSocketDisconnect:
+        logging.info("Extension WS disconnected.")
+    except Exception as exc:
+        logging.warning("Extension WS error: %s", exc)
+    finally:
+        if ws in extension_connections:
+            extension_connections.remove(ws)
+
+
+# ---------------------------------------------------------------------------
+# /extension/chat
+#
+# The extension side panel calls this instead of /chat.
+#
+# Key difference from /chat
+# -------------------------
+# The agent does NOT launch a new Playwright browser here.
+# Instead the content script in the current tab IS the browser — the backend
+# sends action events back over /extension/ws and the side panel relays them
+# to the content script via chrome.runtime.sendMessage (EXECUTE_ACTION).
+#
+# This endpoint:
+#   1. Calls generate_plan() with the goal + visible_text as context.
+#   2. Streams chat_status events over /extension/ws so the side panel can
+#      display step-by-step progress.
+#   3. Emits type="action" events for each planned step so the side panel
+#      can execute them in the current tab via content.js.
+#   4. Does NOT call run_browser_agent_async — no Playwright, no separate
+#      browser window.
+#
+# Request body
+# ------------
+#   goal         : str   — the user's free-text goal
+#   tab_url      : str   — current tab URL (from GET_TAB_CONTEXT)
+#   tab_title    : str   — current tab title
+#   visible_text : str   — body.innerText of the current tab
+#
+# WebSocket events emitted (to /extension/ws)
+# -------------------------------------------
+#   { type: "chat_status", session_id, status: "planning", text }
+#   { type: "chat_status", session_id, status: "step",     text }
+#   { type: "action",      session_id, action: AgentAction, policy: PolicyResult }
+#   { type: "chat_status", session_id, status: "done"|"error", text }
+# ---------------------------------------------------------------------------
+
+class ExtensionChatRequest(BaseModel):
+    goal:         str
+    tab_url:      str = ""
+    tab_title:    str = ""
+    visible_text: str = ""
+
+
+@app.post("/extension/chat")
+async def extension_chat(body: ExtensionChatRequest):
+    from app.agent.planner import generate_plan
+    from app.agent.agent import BrowserAgent
+    from app.agent.llm import get_next_action
+    from app.policy.policy_engine import PolicyEngine
+    from app.policy.gate import enforce_action_contract, GateRejected
+    from app.policy.decision import PolicyDecision
+    from app.schemas.action_schema import AgentAction, SemanticTarget
+    from datetime import datetime
+    import uuid as _uuid
+
+    session_id = str(_uuid.uuid4())
+    chat_sessions[session_id] = [{"role": "user", "text": body.goal}]
+
+    async def _status(status: str, text: str):
+        chat_sessions[session_id].append({"role": "agent", "text": text})
+        await _ext_broadcast({
+            "type":       "chat_status",
+            "session_id": session_id,
+            "status":     status,
+            "text":       text,
+        })
+
+    async def _run():
+        try:
+            # ── Step 1: Plan ───────────────────────────────────────────
+            await _status("planning", f'Planning how to: "{body.goal}"')
+
+            # Pass visible_text as the DOM context so the planner can
+            # produce page-aware steps without a separate browser call.
+            plan = generate_plan(
+                user_task=body.goal,
+                dom=body.visible_text[:8000] if body.visible_text else None,
+            )
+
+            if not plan.steps:
+                await _status("error", "Planner produced no steps — cannot continue.")
+                return
+
+            step_summary = " → ".join(s.goal for s in plan.steps)
+            await _status("step", f"Plan ({len(plan.steps)} steps): {step_summary}")
+
+            # ── Step 2: Per-step LLM grounding + policy check ──────────
+            policy_engine = PolicyEngine()
+            history: list[dict] = []
+
+            for step in plan.steps:
+                await _status("step", f"Step {step.step_number}: {step.goal}")
+
+                # Build task context for this step (mirrors agent._build_task_context)
+                step_context = (
+                    f"{body.goal}\n\n"
+                    f"You are following this plan:\n"
+                    + "\n".join(
+                        f"  {s.step_number}. {s.goal}"
+                        + (" ← CURRENT STEP" if s.step_number == step.step_number else "")
+                        for s in plan.steps
+                    )
+                    + f"\n\nFocus on the CURRENT STEP. "
+                    f"Use the page text below as the DOM.\n\n"
+                    f"PAGE TEXT:\n{body.visible_text[:6000]}"
+                )
+
+                raw = get_next_action(
+                    user_task=step_context,
+                    dom=body.visible_text[:8000] or "<empty>",
+                    history=history,
+                )
+
+                action = AgentAction(
+                    action_id=str(_uuid.uuid4()),
+                    action_type=raw.get("action_type", "done"),
+                    target=raw.get("target", ""),
+                    semantic_target=SemanticTarget(
+                        role=raw.get("semantic_target", {}).get("role", "generic"),
+                        label=raw.get("semantic_target", {}).get("label", ""),
+                    ),
+                    value=raw.get("value"),
+                    reasoning=raw.get("reasoning", ""),
+                    cited_source_text=raw.get("cited_source_text", ""),
+                    cited_source_location=raw.get("cited_source_location", ""),
+                    timestamp=datetime.now().isoformat(),
+                )
+
+                if action.action_type == "done":
+                    await _status("step", f"✓ Step {step.step_number} already satisfied.")
+                    continue
+
+                # Gate check
+                try:
+                    enforce_action_contract(action)
+                except GateRejected as e:
+                    await _status("error", f"Gate rejected action at step {step.step_number}: {e}")
+                    return
+
+                # Policy check — use original goal as trust anchor
+                policy_result = policy_engine.evaluate(
+                    action,
+                    hidden_content_detected=False,   # no heuristic scan in extension mode
+                    user_task=body.goal,
+                    visible_page_text=body.visible_text,
+                    hidden_page_text="",
+                )
+
+                # Emit the action event — side panel will execute or escalate
+                await _ext_broadcast({
+                    "type":       "action",
+                    "session_id": session_id,
+                    "action":     action.model_dump(mode="json"),
+                    "policy":     policy_result.model_dump(mode="json"),
+                })
+
+                if policy_result.decision == PolicyDecision.DENY:
+                    await _status(
+                        "error",
+                        f"Blocked at step {step.step_number}: {policy_result.reason}",
+                    )
+                    return
+
+                if policy_result.decision == PolicyDecision.ESCALATE:
+                    await _status(
+                        "step",
+                        f"⚠️ Step {step.step_number} escalated — "
+                        f"awaiting human approval in the side panel.",
+                    )
+                    # The side panel shows Approve/Deny; we don't block here.
+
+                history.append(action.model_dump())
+
+            await _status("done", f'Task complete: "{body.goal}"')
+
+        except Exception as exc:
+            logging.exception("Extension chat error for session %s", session_id)
+            await _status("error", f"Agent error: {exc}")
+
+    asyncio.create_task(_run())
+    return {"session_id": session_id, "status": "started"}
