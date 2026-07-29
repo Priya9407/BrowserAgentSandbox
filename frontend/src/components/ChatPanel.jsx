@@ -20,17 +20,19 @@ const STATUS_ICON = {
   error:    "❌",
 };
 
-// Demo task suggestions
+// Demo task suggestions — prefer simple, reliable pages for demo lock
 const DEMO_TASKS = [
   {
     label: "Product price",
     goal:  "Search for the Sony WH-1000XM5 headphones and tell me the current price",
+    // Use a simple search results page (less dynamic than travel widgets)
     url:   "https://www.google.com/search?q=Sony+WH-1000XM5+price",
   },
   {
-    label: "Check a flight",
-    goal:  "Find the cheapest one-way flight from Delhi to Goa next week and report the price and airline",
-    url:   "https://www.google.com/travel/flights/search?tfs=CBwQAhoeEgoyMDI1LTA4LTA0agwIAhIIL20vMDlmMDcaHRIKMjAyNS0wOC0wNHIMCAISCC9tLzAxZmRteA",
+    label: "Check a flight (simple)",
+    goal:  "Find one flight result for Delhi to Goa next week and report the price and airline",
+    // Use a generic search for flights instead of the Google Flights widget which can be flaky
+    url:   "https://www.google.com/search?q=delhi+to+goa+flight+one+way+next+week",
   },
   {
     label: "Restaurant hours",
@@ -38,9 +40,10 @@ const DEMO_TASKS = [
     url:   "https://www.google.com/search?q=Dominos+Pizza+Bangalore+opening+hours",
   },
   {
-    label: "Buy laptop (demo)",
-    goal:  "Find the cheapest laptop on this page and add it to the cart",
-    url:   null,
+    label: "Example site",
+    goal:  "Open example.com and tell me the page title",
+    // A static, highly reliable page for demos
+    url:   "https://example.com/",
   },
 ];
 
@@ -231,6 +234,13 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ goal, url: resolvedUrl, headless: false }),
       });
+
+      // Surface HTTP-level failures clearly
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(`Server returned ${res.status}: ${text}`);
+      }
+
       const data = await res.json();
       onSessionStart?.(data.session_id);
     } catch (err) {
