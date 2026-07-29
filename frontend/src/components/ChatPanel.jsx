@@ -108,7 +108,11 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   const [stepTimeline, setTimeline]   = useState([]);   // structured step history
   const [running, setRunning]         = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
+  const [summary, setSummary]         = useState(null);  // done-summary card data
+  const [captchaPending, setCaptchaPending] = useState(false); // human needs to solve a CAPTCHA
   const replanSeenRef                 = useRef(false);  // track whether a re-plan occurred this run
+  const stepTimelineRef               = useRef([]);     // mirrors stepTimeline, read at terminal event
+  const taskStartRef                  = useRef(null);    // Date.now() when a task starts, for elapsed time
   const bottomRef                     = useRef(null);
   const inputRef                      = useRef(null);
 
@@ -130,11 +134,22 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
       const isReplan =
         text.startsWith("↻") || (se.outcome === "failed" && replanSeenRef.current);
 
+      // CAPTCHA pause/resume — show or hide the Resume banner
+      if (se.outcome === "paused") {
+        setCaptchaPending(true);
+      } else if (captchaPending) {
+        setCaptchaPending(false);
+      }
+
       if (text.startsWith("↻ New plan")) {
         replanSeenRef.current = true;
       }
 
-      setTimeline(prev => upsertStep(prev, se, isReplan));
+      setTimeline(prev => {
+        const next = upsertStep(prev, se, isReplan);
+        stepTimelineRef.current = next;
+        return next;
+      });
 
       // Step events don't add a flat message — the timeline IS the history.
       return;
@@ -145,6 +160,25 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     if (isTerminal) {
       setRunning(false);
       replanSeenRef.current = false;
+
+      // Build the done-summary card from the timeline gathered so far.
+      const timeline = stepTimelineRef.current;
+      const successCount = timeline.filter(s => s.outcome === "success").length;
+      const failCount = timeline.filter(
+        s => s.outcome === "failed" || s.outcome === "skipped"
+      ).length;
+      const elapsedSeconds = taskStartRef.current
+        ? ((Date.now() - taskStartRef.current) / 1000).toFixed(1)
+        : null;
+
+      setSummary({
+        status,
+        text,
+        successCount,
+        failCount,
+        totalSteps: timeline.length,
+        elapsedSeconds,
+      });
     }
 
     // Don't repeat identical consecutive messages
@@ -180,6 +214,10 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     setInput("");
     setRunning(true);
     setTimeline([]);
+    setSummary(null);
+    setCaptchaPending(false);
+    stepTimelineRef.current = [];
+    taskStartRef.current = Date.now();
     replanSeenRef.current = false;
 
     setMessages(prev => [
@@ -219,8 +257,38 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   const handleClear = () => {
     setMessages([]);
     setTimeline([]);
+    setSummary(null);
+    setCaptchaPending(false);
+    stepTimelineRef.current = [];
+    taskStartRef.current = null;
     setRunning(false);
     replanSeenRef.current = false;
+  };
+
+  // Human clicks "I solved it — Resume" after completing a CAPTCHA
+  // challenge in the visible browser window. This never solves anything
+  // itself — it just signals the paused agent loop to continue.
+  const handleResumeCaptcha = async () => {
+    if (!activeSessionId) return;
+    setCaptchaPending(false);
+    try {
+      await fetch("http://localhost:8000/resolve-captcha", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ session_id: activeSessionId }),
+      });
+    } catch (err) {
+      setMessages(prev => [
+        ...prev,
+        {
+          id:     `err-${Date.now()}`,
+          role:   "status",
+          status: "error",
+          text:   `Failed to resume: ${err.message}`,
+        },
+      ]);
+      setCaptchaPending(true);
+    }
   };
 
   // -------------------------------------------------------------------------
@@ -312,6 +380,53 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
                 <StepTimeline steps={stepTimeline} />
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Done summary card ────────────────────────────────────────── */}
+        {summary && !running && (
+          <div className={`summary-card summary-card-${summary.status}`}>
+            <div className="summary-card-header">
+              <span className="summary-card-icon">
+                {summary.status === "done" ? "✅" : "❌"}
+              </span>
+              <span className="summary-card-title">
+                {summary.status === "done" ? "Task complete" : "Task ended with an error"}
+              </span>
+            </div>
+            <div className="summary-card-stats">
+              <div className="summary-stat">
+                <span className="summary-stat-value">{summary.successCount}</span>
+                <span className="summary-stat-label">succeeded</span>
+              </div>
+              <div className="summary-stat">
+                <span className="summary-stat-value">{summary.failCount}</span>
+                <span className="summary-stat-label">failed / skipped</span>
+              </div>
+              <div className="summary-stat">
+                <span className="summary-stat-value">
+                  {summary.elapsedSeconds != null ? `${summary.elapsedSeconds}s` : "—"}
+                </span>
+                <span className="summary-stat-label">elapsed</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── CAPTCHA pause banner ─────────────────────────────────────── */}
+        {captchaPending && (
+          <div className="captcha-banner">
+            <span className="captcha-banner-icon">⏸</span>
+            <span className="captcha-banner-text">
+              CAPTCHA detected — solve it in the browser window, then click Resume.
+            </span>
+            <button
+              type="button"
+              className="captcha-resume-btn"
+              onClick={handleResumeCaptcha}
+            >
+              I solved it — Resume
+            </button>
           </div>
         )}
 

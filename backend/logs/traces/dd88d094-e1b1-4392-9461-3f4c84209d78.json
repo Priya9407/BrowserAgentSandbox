@@ -1,0 +1,41 @@
+[
+  {
+    "trace_id": "dd88d094-e1b1-4392-9461-3f4c84209d78",
+    "id": "23dcda10d9834f44",
+    "name": "chat_task",
+    "start_time": 1785320809421.0256,
+    "end_time": 1785320912442.469,
+    "duration_ms": 103021.44,
+    "metadata": {
+      "user_task": "Look up the opening hours of Domino's Pizza in Bangalore and report them",
+      "screenshot_url": "file://C:\\Users\\archi\\Documents\\Github\\BrowserAgentSandbox\\backend\\logs\\screenshots\\dd88d094-e1b1-4392-9461-3f4c84209d78.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 103.02
+    },
+    "subsegments": [
+      {
+        "id": "f0b1d610fb554f26",
+        "parent_id": "23dcda10d9834f44",
+        "name": "planner.generate_plan",
+        "start_time": 1785320809421.0256,
+        "end_time": 1785320829774.1484,
+        "duration_ms": 20353.12,
+        "metadata": {},
+        "error": null
+      },
+      {
+        "id": "c167341eb92146ee",
+        "parent_id": "23dcda10d9834f44",
+        "name": "llm.get_next_action",
+        "start_time": 1785320863800.2415,
+        "end_time": 1785320908730.6997,
+        "duration_ms": 44930.46,
+        "metadata": {
+          "step": 0
+        },
+        "error": null
+      }
+    ]
+  }
+]

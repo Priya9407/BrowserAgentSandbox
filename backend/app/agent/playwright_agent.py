@@ -3,6 +3,7 @@ playwright_agent.py — Browser execution engine
 """
 
 import asyncio
+import time as _time
 from pathlib import Path
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 
@@ -14,6 +15,8 @@ from app.policy.gate import enforce_action_contract, GateRejected
 from app.agent.planner import generate_plan
 from app.agent.llm import ask_vision_for_element, replan_after_failure
 from app.schemas.action_schema import AgentAction
+from app.tracing.tracer import tracer
+from app.aws.s3_client import upload_screenshot
 
 # ---------------------------------------------------------------------------
 # ARIA role map — maps our coarse labels to Playwright's role strings
@@ -37,6 +40,40 @@ _ROLE_ALIASES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Semantic element resolution 
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# CAPTCHA / bot-check detection — bug fix (Milestone 3 item A)
+#
+# We do NOT attempt to solve image/visual CAPTCHA challenges. That's a
+# deliberate scope boundary, not a missing feature: CAPTCHAs exist to stop
+# automated agents, and this project isn't built to defeat that check.
+#
+# Before this fix, hitting a challenge (e.g. after clicking "I'm not a
+# robot" and getting an image-selection puzzle) made the agent grind
+# through the retry/re-plan loop uselessly until the whole task's step
+# budget ran out — a silent, confusing timeout. This detects the
+# challenge and fails honestly instead, same pattern as every other
+# unrecoverable failure in this codebase.
+# ---------------------------------------------------------------------------
+def detect_captcha(page: Page) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                    const html = document.documentElement.innerHTML.toLowerCase();
+                    return (
+                        html.includes('recaptcha') ||
+                        html.includes('hcaptcha') ||
+                        html.includes('g-recaptcha') ||
+                        document.querySelector('iframe[src*="recaptcha"]') !== null ||
+                        document.querySelector('iframe[title*="captcha" i]') !== null
+                    );
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
 
 def semantic_find(page: Page, action: AgentAction, timeout_ms: int = 4000):
     """
@@ -166,9 +203,10 @@ async def run_browser_agent_async(
     headless: bool = False,
     auto_approve_escalated: bool = False,
     step_callback=None,
+    trace_id: str | None = None,
 ):
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
+    result = await loop.run_in_executor(
         None,
         lambda: run_browser_agent(
             queue,
@@ -178,8 +216,10 @@ async def run_browser_agent_async(
             headless=headless,
             auto_approve_escalated=auto_approve_escalated,
             step_callback=step_callback,
+            trace_id=trace_id,
         ),
     )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +234,7 @@ def run_browser_agent(
     headless: bool = False,
     auto_approve_escalated: bool = False,
     step_callback=None,
+    trace_id: str | None = None,
 ):
     # ── _emit helper ────────────────────────────────────────────────────
     def _emit(status: str, text: str, step_event: dict | None = None):
@@ -221,9 +262,17 @@ def run_browser_agent(
     browser_agent = BrowserAgent()
     browser_agent.set_task(user_task)
 
+    # ── Tracing (X-Ray placeholder — see app/tracing/tracer.py) ──────────
+    trace_seg = tracer.start_segment("chat_task", trace_id=trace_id, user_task=user_task)
+    _task_start = _time.time()
+    _success_count = 0
+    _fail_count = 0
+
     # ── Planning ─────────────────────────────────────────────────────────
     _emit("step", "Generating plan…")
+    _plan_sub = trace_seg.start_subsegment("planner.generate_plan")
     plan = generate_plan(user_task)
+    trace_seg.finish_subsegment(_plan_sub)
     print("\n========== GENERATED PLAN ==========")
     print(plan.model_dump_json(indent=2))
     print("=====================================\n")
@@ -256,6 +305,16 @@ def run_browser_agent(
         # ================================================================
         # Main execution loop
         # ================================================================
+        # ── Task outcome tracking — bug fix (Milestone 3 item A) ───────────
+        # Previously, ANY exit from the loop below (CAPTCHA block, policy
+        # DENY, gate rejection, or simply running out of steps) fell through
+        # to the same code path as genuine success, and main.py reported
+        # "done" unconditionally regardless of why the loop actually
+        # stopped. Default to "error/incomplete" here; only the explicit
+        # "all steps complete" path below flips this to "done".
+        task_outcome = "error"
+        task_outcome_reason = "Task ended before completion (step budget exhausted)."
+
         while not browser_agent.is_done():
             total = len(browser_agent.plan.steps) if browser_agent.plan and browser_agent.plan.steps else 0
             step_idx = browser_agent.current_step_index
@@ -286,8 +345,65 @@ def run_browser_agent(
             )
             dom = page.content()
 
-            # ── Ask LLM for next action ───────────────────────────────────
+            # ── CAPTCHA / bot-check detection ─────────────────────────────
+            # See detect_captcha() docstring — we never attempt to solve the
+            # challenge ourselves. Instead: pause, ask the human to solve it
+            # in the visible browser window, and resume once they signal
+            # they're done (via POST /resolve-captcha). Mirrors the existing
+            # human-approval pattern used for escalated actions.
+            if detect_captcha(page):
+                from app.agent.captcha_state import pending_captchas
+
+                pending_captchas[trace_seg.trace_id] = "pending"
+                _emit(
+                    "step",
+                    "⏸ CAPTCHA detected — please solve it in the browser "
+                    "window, then click Resume.",
+                    {
+                        "step_number": step_idx + 1,
+                        "total_steps": total,
+                        "goal": browser_agent.current_step_goal,
+                        "outcome": "paused",
+                        "retry": retry_count,
+                        "session_id": trace_seg.trace_id,
+                    },
+                )
+
+                waited_ms = 0
+                timeout_ms = 5 * 60 * 1000  # 5 minutes — don't hang forever
+                while (
+                    pending_captchas.get(trace_seg.trace_id) == "pending"
+                    and waited_ms < timeout_ms
+                ):
+                    page.wait_for_timeout(1000)
+                    waited_ms += 1000
+
+                resolved = pending_captchas.pop(trace_seg.trace_id, None) == "resolved"
+                if resolved:
+                    _emit(
+                        "step",
+                        "▶ Resuming after human solved the CAPTCHA…",
+                        {
+                            "step_number": step_idx + 1,
+                            "total_steps": total,
+                            "goal": browser_agent.current_step_goal,
+                            "outcome": "running",
+                            "retry": retry_count,
+                        },
+                    )
+                    continue  # re-loop: re-check the page fresh, no LLM call spent
+
+                task_outcome = "error"
+                task_outcome_reason = (
+                    "CAPTCHA was not resolved within the timeout — "
+                    "could not complete automatically."
+                )
+                break
+            _llm_sub = trace_seg.start_subsegment(
+                "llm.get_next_action", step=browser_agent.step_count
+            )
             action = browser_agent.think(dom)
+            trace_seg.finish_subsegment(_llm_sub)
             print(f"\n--- Step {browser_agent.step_count} ---")
             print(action.model_dump())
 
@@ -312,6 +428,8 @@ def run_browser_agent(
                     continue
                 else:
                     _emit("step", "All steps complete.")
+                    task_outcome = "done"
+                    task_outcome_reason = None
                     break
 
             # ── Gate ─────────────────────────────────────────────────────
@@ -320,6 +438,8 @@ def run_browser_agent(
             except GateRejected as e:
                 _emit("error", f"Gate rejected action: {e}")
                 print(f"\nGATE REJECTED: {e}")
+                task_outcome = "error"
+                task_outcome_reason = f"Gate rejected action: {e}"
                 break
 
             # ── Policy engine ─────────────────────────────────────────────
@@ -345,6 +465,9 @@ def run_browser_agent(
 
             # ── Execute / escalate / deny ─────────────────────────────────
             if result.decision == PolicyDecision.ALLOW:
+                _exec_sub = trace_seg.start_subsegment(
+                    "browser.execute_action", action_type=action.action_type
+                )
                 execution_ok = _execute_with_recovery(
                     page=page,
                     action=action,
@@ -354,8 +477,14 @@ def run_browser_agent(
                     emit=_emit,
                     total=total,
                 )
+                trace_seg.finish_subsegment(
+                    _exec_sub, error=None if execution_ok else "execution_failed"
+                )
                 if execution_ok:
+                    _success_count += 1
                     browser_agent.record_step_success()
+                else:
+                    _fail_count += 1
                     # advance_step() only when the action is done-like
                     # (the step goal advance is handled per-done signal
                     #  or after a successful non-done action within a step)
@@ -379,10 +508,51 @@ def run_browser_agent(
             else:  # DENY
                 _emit("step", f"Blocked by policy: {result.reason}")
                 print(f"DENY — {result.reason}")
+                task_outcome = "error"
+                task_outcome_reason = f"Blocked by policy: {result.reason}"
                 break
 
         page.wait_for_timeout(2000)
+
+        # ── Screenshot placeholder (Milestone 3 item C — S3, optional) ────
+        # Falls back to a local file path when AWS isn't configured yet;
+        # see app/aws/s3_client.py. Never raises — a failed screenshot
+        # should not take down the whole task run.
+        try:
+            screenshot_dir = Path(__file__).resolve().parents[3] / "backend" / "logs" / "screenshots"
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = screenshot_dir / f"{trace_seg.trace_id}.png"
+            page.screenshot(path=str(screenshot_path))
+            screenshot_url = upload_screenshot(
+                str(screenshot_path), key=f"{trace_seg.trace_id}.png"
+            )
+            trace_seg.set_metadata(screenshot_url=screenshot_url)
+        except Exception as exc:
+            print(f"[playwright_agent] screenshot/upload skipped: {exc}")
+
         browser.close()
+
+    # ── Close out the trace segment with final run stats ──────────────────
+    trace_seg.set_metadata(
+        success_count=_success_count,
+        fail_count=_fail_count,
+        elapsed_seconds=round(_time.time() - _task_start, 2),
+    )
+    tracer.finish_segment(trace_seg)
+
+    # ── Bug fix (Milestone 3 item A) ────────────────────────────────────
+    # Return the real outcome instead of letting callers assume success.
+    # Previously this function returned nothing, and main.py sent a
+    # hardcoded "done" status regardless of whether the task actually
+    # completed, was blocked by policy, hit a CAPTCHA, or ran out of steps.
+    return {
+        "status": task_outcome,               # "done" | "error"
+        "reason": task_outcome_reason,
+        "trace_id": trace_seg.trace_id,
+        "success_count": _success_count,
+        "fail_count": _fail_count,
+        "elapsed_seconds": round(_time.time() - _task_start, 2),
+    }
 
 
 # ---------------------------------------------------------------------------

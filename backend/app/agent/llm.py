@@ -25,6 +25,7 @@ when both semantic and CSS targeting fail.
 """
 
 import os
+import re
 import json
 import base64
 
@@ -39,6 +40,40 @@ client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key=os.getenv("NVIDIA_API_KEY"),
 )
+
+# ---------------------------------------------------------------------------
+# DOM trimming — bug fix (Milestone 3 item A)
+#
+# get_next_action() used to insert the FULL raw page.content() into the
+# prompt with no cap. Modern SPA pages (Google Flights, MakeMyTrip, etc.)
+# can serialize to megabytes of HTML, which blew straight past the model's
+# 131072-token context window (observed: 948,985 input tokens on the
+# flight-search demo task -> hard 400 error, task killed).
+#
+# Fix: strip <script>/<style> blocks (bulky, useless for element-finding)
+# and cap what's left. replan_after_failure() already did a naive
+# dom[:3000] cap below; this trims BEFORE slicing so we don't waste the
+# budget on inline JS/CSS.
+# ---------------------------------------------------------------------------
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+
+
+def _trim_dom(dom: str, max_chars: int = 15000) -> str:
+    if not dom:
+        return dom
+    cleaned = _SCRIPT_STYLE_RE.sub("", dom)
+    if len(cleaned) > max_chars:
+        # Bug fix (Milestone 3 item A, round 2): a blind character slice can
+        # cut a tag's attributes in half — e.g. truncating mid-way through
+        # a Google search result's href, producing a broken/incomplete URL
+        # that the LLM then tries to navigate to ("site can't be reached").
+        # Cut at the last complete ">" before the limit instead, so every
+        # tag we keep is either fully included or fully excluded.
+        cutoff = cleaned.rfind(">", 0, max_chars)
+        if cutoff == -1:
+            cutoff = max_chars
+        cleaned = cleaned[: cutoff + 1] + "\n<!-- [truncated: page HTML exceeded token budget] -->"
+    return cleaned
 
 # ---------------------------------------------------------------------------
 # Action grounding
@@ -58,6 +93,7 @@ def get_next_action(user_task: str, dom: str, history: list | None = None):
         cited_source_location str
     """
     history = history or []
+    dom = _trim_dom(dom)
 
     history_block = "\n".join(
         f"Step {i+1}: {h['action_type']} on {h['target']} — {h['reasoning']}"
@@ -119,6 +155,14 @@ Return a JSON object with EXACTLY these keys:
         # Ensure semantic_target is always present
         if "semantic_target" not in result or not isinstance(result["semantic_target"], dict):
             result["semantic_target"] = {"role": "generic", "label": ""}
+        # Bug fix: some action types (e.g. "done", "scroll") legitimately
+        # have no CSS target, and the LLM sometimes returns null for it —
+        # but AgentAction.target is a required string, so that crashed the
+        # whole task with a raw Pydantic validation error instead of
+        # failing gracefully. Default to "" the same way the error-path
+        # fallback below already does.
+        if "target" not in result or result["target"] is None:
+            result["target"] = ""
     except Exception as e:
         print(f"Failed to parse JSON from LLM: {e}")
         result = {
@@ -167,7 +211,10 @@ def ask_vision_for_element(page, description: str) -> str | None:
         )
 
         response = client.chat.completions.create(
-            model="meta/llama-3.1-70b-instruct",
+            # Bug fix (Milestone 3 item A): meta/llama-3.1-70b-instruct is
+            # text-only. Vision fallback needs a real VLM — this is the
+            # NVIDIA-hosted vision-capable model.
+            model="meta/llama-3.2-11b-vision-instruct",
             messages=[
                 {
                     "role": "user",
@@ -217,7 +264,7 @@ def replan_after_failure(
     )
 
     dom_block = (
-        f"\nCURRENT PAGE HTML (abbreviated):\n{dom[:3000]}"
+        f"\nCURRENT PAGE HTML (abbreviated):\n{_trim_dom(dom, max_chars=3000)}"
         if dom
         else ""
     )

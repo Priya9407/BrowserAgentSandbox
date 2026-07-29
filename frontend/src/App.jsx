@@ -30,7 +30,7 @@ function App() {
       {/* ── Header ─────────────────────────────────────────── */}
       <header className="app-header">
         <h1 className="app-title">
-          <span className="app-title-main">Frontier</span>
+          <span className="app-title-main">Aegis Vigillis</span>
           <span className="app-title-sub">Browser Agent Sandbox</span>
         </h1>
         <div className="header-right">

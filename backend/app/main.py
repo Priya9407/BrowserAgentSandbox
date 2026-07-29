@@ -195,20 +195,29 @@ async def _run_chat_agent(
 
         forwarder = asyncio.create_task(_forward_tagged())
 
-        await run_browser_agent_async(
+        result = await run_browser_agent_async(
             tagged_queue,
             page_uri=page_uri,
             user_task=goal,
             headless=headless,
             auto_approve_escalated=False,
             step_callback=status_callback,   # streams per-step progress to chat
+            trace_id=session_id,             # keys the X-Ray placeholder trace file
         )
 
         # Signal forwarder to stop
         await tagged_queue.put(None)
         await forwarder
 
-        await status_callback("done", f'Task complete: "{goal}"')
+        # Bug fix (Milestone 3 item A): previously this sent "done"
+        # unconditionally, even when the task was blocked by policy, hit a
+        # CAPTCHA, or ran out of steps without finishing. Respect the real
+        # outcome from run_browser_agent_async instead.
+        if result and result.get("status") == "error":
+            reason = result.get("reason") or "did not complete"
+            await status_callback("error", f'Task ended without completing: "{goal}" — {reason}')
+        else:
+            await status_callback("done", f'Task complete: "{goal}"')
 
     except Exception as exc:
         logging.exception("Chat agent error for session %s", session_id)
@@ -243,6 +252,22 @@ def resolve_escalation(payload: EscalationResolution):
     from app.agent.escalation_state import pending_escalations
     if payload.action_id in pending_escalations:
         pending_escalations[payload.action_id] = payload.decision
+        return {"status": "success"}
+    return {"status": "not found"}
+
+
+# ---------------------------------------------------------------------------
+# /resolve-captcha — human signals they solved a CAPTCHA in the browser
+# ---------------------------------------------------------------------------
+class CaptchaResolution(BaseModel):
+    session_id: str
+
+
+@app.post("/resolve-captcha")
+def resolve_captcha(payload: CaptchaResolution):
+    from app.agent.captcha_state import pending_captchas
+    if payload.session_id in pending_captchas:
+        pending_captchas[payload.session_id] = "resolved"
         return {"status": "success"}
     return {"status": "not found"}
 

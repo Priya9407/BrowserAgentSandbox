@@ -24,6 +24,7 @@ const OUTCOME_META = {
   success: { icon: "✓",  label: "Done",     cls: "tl-success"  },
   failed:  { icon: "✗",  label: "Failed",   cls: "tl-failed"   },
   skipped: { icon: "⤳",  label: "Skipped",  cls: "tl-skipped"  },
+  paused:  { icon: "⏸",  label: "Paused",   cls: "tl-paused"   },
 };
 
 export default function StepTimeline({ steps }) {
