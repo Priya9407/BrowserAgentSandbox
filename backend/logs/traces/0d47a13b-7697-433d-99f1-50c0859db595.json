@@ -1,0 +1,89 @@
+[
+  {
+    "trace_id": "0d47a13b-7697-433d-99f1-50c0859db595",
+    "id": "4fca5ded1917435b",
+    "name": "chat_task",
+    "start_time": 1785309261434.6643,
+    "end_time": 1785309831756.8542,
+    "duration_ms": 570322.19,
+    "metadata": {
+      "user_task": "Search for the Sony WH-1000XM5 headphones and tell me the current price",
+      "screenshot_url": "file://C:\\Users\\archi\\Documents\\Github\\BrowserAgentSandbox\\backend\\logs\\screenshots\\0d47a13b-7697-433d-99f1-50c0859db595.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 570.32
+    },
+    "subsegments": [
+      {
+        "id": "9db38b5906be4e20",
+        "parent_id": "4fca5ded1917435b",
+        "name": "planner.generate_plan",
+        "start_time": 1785309261436.6562,
+        "end_time": 1785309347572.3074,
+        "duration_ms": 86135.65,
+        "metadata": {},
+        "error": null
+      },
+      {
+        "id": "2cb3e38cb4cb49b9",
+        "parent_id": "4fca5ded1917435b",
+        "name": "llm.get_next_action",
+        "start_time": 1785309361599.9841,
+        "end_time": 1785309393093.6284,
+        "duration_ms": 31493.64,
+        "metadata": {
+          "step": 0
+        },
+        "error": null
+      },
+      {
+        "id": "73e2009faffc4bca",
+        "parent_id": "4fca5ded1917435b",
+        "name": "llm.get_next_action",
+        "start_time": 1785309410052.8298,
+        "end_time": 1785309432390.5664,
+        "duration_ms": 22337.74,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "474db97669074a10",
+        "parent_id": "4fca5ded1917435b",
+        "name": "llm.get_next_action",
+        "start_time": 1785309515510.162,
+        "end_time": 1785309547227.6052,
+        "duration_ms": 31717.44,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "443e3b7b81324d05",
+        "parent_id": "4fca5ded1917435b",
+        "name": "llm.get_next_action",
+        "start_time": 1785309791194.634,
+        "end_time": 1785309797475.8237,
+        "duration_ms": 6281.19,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "1b3f17cd093c4ce4",
+        "parent_id": "4fca5ded1917435b",
+        "name": "llm.get_next_action",
+        "start_time": 1785309797531.2815,
+        "end_time": 1785309828614.28,
+        "duration_ms": 31083.0,
+        "metadata": {
+          "step": 4
+        },
+        "error": null
+      }
+    ]
+  }
+]

@@ -33,16 +33,27 @@ class RiskClassifier:
 
     def classify(self, action: AgentAction) -> RiskCategory:
 
-        target = action.target.lower()
-
-        reasoning = action.reasoning.lower()
-
-        text = action.cited_source_text.lower()
-
-        combined = f"{target} {reasoning} {text}"
+        target = (action.target or "").lower()
+        text = (action.cited_source_text or "").lower()
+        label = action.semantic_target.label.lower()
+        
+        # Don't include reasoning, it contains generalized verbs that trigger false positives!
+        combined = f"{target} {text} {label}"
 
         # --------------------------
-        # PAYMENT
+        # CONSEQUENCE-BASED PRE-CHECK
+        # If the action_type itself implies a sensitive consequence,
+        # classify based on that before looking at keywords.
+        # This catches cases where a "Continue" button actually
+        # triggers payment, credential submission, or data send.
+        # --------------------------
+        if action.action_type in ("fill", "type"):
+            # Filling a form field is always at least FORM_FILL;
+            # the keyword checks below may escalate it further.
+            pass
+
+        # --------------------------
+        # PAYMENT  (highest priority — check first)
         # --------------------------
 
         payment_keywords = [
@@ -64,7 +75,7 @@ class RiskClassifier:
             return RiskCategory.PAYMENT
 
         # --------------------------
-        # LOGIN / PASSWORD
+        # CREDENTIAL  (login, password, token)
         # --------------------------
 
         credential_keywords = [
@@ -84,6 +95,23 @@ class RiskClassifier:
             return RiskCategory.CREDENTIAL
 
         # --------------------------
+        # SEND  (send, email, message, share, publish)
+        # Check BEFORE download so "send file" patterns are caught
+        # as SEND rather than DOWNLOAD.
+        # --------------------------
+
+        send_keywords = [
+            "send",
+            "email",
+            "message",
+            "share",
+            "publish",
+        ]
+
+        if any(word in combined for word in send_keywords):
+            return RiskCategory.SEND
+
+        # --------------------------
         # DOWNLOAD
         # --------------------------
 
@@ -91,23 +119,6 @@ class RiskClassifier:
 
         if any(word in combined for word in download_keywords):
             return RiskCategory.DOWNLOAD
-
-        # --------------------------
-        # SEND
-        # --------------------------
-
-        send_keywords = [
-            "send",
-            "submit",
-            "post",
-            "publish",
-            "email",
-            "message",
-            "share",
-        ]
-
-        if any(word in combined for word in send_keywords):
-            return RiskCategory.SEND
 
         # --------------------------
         # FILE UPLOAD
@@ -128,7 +139,7 @@ class RiskClassifier:
             return RiskCategory.DELETE
 
         # --------------------------
-        # FORM FILL
+        # FORM FILL  (input, search, name, address, phone)
         # --------------------------
 
         form_keywords = [
@@ -145,20 +156,34 @@ class RiskClassifier:
             return RiskCategory.FORM_FILL
 
         # --------------------------
-        # NAVIGATION
+        # NAVIGATION  (lowest priority — only if no sensitive match)
+        # Moved to END so that "Continue", "Next", "Back" etc. are
+        # only classified as NAVIGATION when no payment/credential/
+        # send/download keyword was present.
         # --------------------------
 
         navigation_keywords = [
             "next",
             "previous",
-            "home",
-            "menu",
             "continue",
             "back",
+            "home",
+            "menu",
             "link",
         ]
 
         if any(word in combined for word in navigation_keywords):
+            return RiskCategory.NAVIGATION
+
+        # --------------------------
+        # FALLBACK: check action_type for consequence-based inference
+        # If the action is a fill/type but no keywords matched,
+        # it's still a form interaction — classify as FORM_FILL.
+        # --------------------------
+        if action.action_type in ("fill", "type"):
+            return RiskCategory.FORM_FILL
+
+        if action.action_type == "navigate":
             return RiskCategory.NAVIGATION
 
         return RiskCategory.UNKNOWN

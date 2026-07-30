@@ -1,0 +1,41 @@
+[
+  {
+    "trace_id": "01f151dc-6c63-43a2-ac5f-8384a4b5964e",
+    "id": "3a449ad59cf24113",
+    "name": "chat_task",
+    "start_time": 1785384314065.9004,
+    "end_time": 1785384589510.647,
+    "duration_ms": 275444.75,
+    "metadata": {
+      "user_task": "i want nearby cafes",
+      "screenshot_url": "file://C:\\Users\\Nithya\\OneDrive\\Documents\\projects\\frontier\\BrowserAgentSandbox\\backend\\logs\\screenshots\\01f151dc-6c63-43a2-ac5f-8384a4b5964e.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 275.44
+    },
+    "subsegments": [
+      {
+        "id": "26a5b4fbded849cc",
+        "parent_id": "3a449ad59cf24113",
+        "name": "planner.generate_plan",
+        "start_time": 1785384314067.2344,
+        "end_time": 1785384514289.95,
+        "duration_ms": 200222.72,
+        "metadata": {},
+        "error": null
+      },
+      {
+        "id": "0e6cf9237b0244f9",
+        "parent_id": "3a449ad59cf24113",
+        "name": "llm.get_next_action",
+        "start_time": 1785384521713.9114,
+        "end_time": 1785384582170.5154,
+        "duration_ms": 60456.6,
+        "metadata": {
+          "step": 0
+        },
+        "error": null
+      }
+    ]
+  }
+]

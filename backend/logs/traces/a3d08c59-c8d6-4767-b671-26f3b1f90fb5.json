@@ -1,0 +1,53 @@
+[
+  {
+    "trace_id": "a3d08c59-c8d6-4767-b671-26f3b1f90fb5",
+    "id": "283908a37b4447b6",
+    "name": "chat_task",
+    "start_time": 1785387174950.7178,
+    "end_time": 1785387385827.7412,
+    "duration_ms": 210877.02,
+    "metadata": {
+      "user_task": "Go to https://priya9407.github.io/QuizForFrontier/ and complete the quiz for me",
+      "screenshot_url": "file://C:\\Nexiva\\Frontier\\version1\\backend\\logs\\screenshots\\a3d08c59-c8d6-4767-b671-26f3b1f90fb5.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 210.88
+    },
+    "subsegments": [
+      {
+        "id": "baf23aad7f3c4792",
+        "parent_id": "283908a37b4447b6",
+        "name": "planner.generate_plan",
+        "start_time": 1785387174951.716,
+        "end_time": 1785387268885.584,
+        "duration_ms": 93933.87,
+        "metadata": {},
+        "error": null
+      },
+      {
+        "id": "a33530024bc84685",
+        "parent_id": "283908a37b4447b6",
+        "name": "llm.get_next_action",
+        "start_time": 1785387273031.6072,
+        "end_time": 1785387287846.141,
+        "duration_ms": 14814.53,
+        "metadata": {
+          "step": 0
+        },
+        "error": null
+      },
+      {
+        "id": "01df8541a46a4c68",
+        "parent_id": "283908a37b4447b6",
+        "name": "llm.get_next_action",
+        "start_time": 1785387297750.6216,
+        "end_time": 1785387326409.8613,
+        "duration_ms": 28659.24,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      }
+    ]
+  }
+]

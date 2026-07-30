@@ -1,0 +1,77 @@
+[
+  {
+    "trace_id": "3293b733-4f5c-4f4a-88bc-b66f8f548b45",
+    "id": "52885e69e99544cd",
+    "name": "chat_task",
+    "start_time": 1785384760561.6711,
+    "end_time": 1785385168267.0137,
+    "duration_ms": 407705.34,
+    "metadata": {
+      "user_task": "Search for the Sony WH-1000XM5 headphones and tell me the current price",
+      "screenshot_url": "file://C:\\Nexiva\\Frontier\\version1\\backend\\logs\\screenshots\\3293b733-4f5c-4f4a-88bc-b66f8f548b45.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 407.71
+    },
+    "subsegments": [
+      {
+        "id": "d7140331958447ad",
+        "parent_id": "52885e69e99544cd",
+        "name": "planner.generate_plan",
+        "start_time": 1785384760562.3027,
+        "end_time": 1785384826773.562,
+        "duration_ms": 66211.26,
+        "metadata": {},
+        "error": null
+      },
+      {
+        "id": "ecc1f79ec27e490d",
+        "parent_id": "52885e69e99544cd",
+        "name": "llm.get_next_action",
+        "start_time": 1785384857745.0398,
+        "end_time": 1785384937957.9502,
+        "duration_ms": 80212.91,
+        "metadata": {
+          "step": 0
+        },
+        "error": null
+      },
+      {
+        "id": "96b841512a094f80",
+        "parent_id": "52885e69e99544cd",
+        "name": "llm.get_next_action",
+        "start_time": 1785384962395.7952,
+        "end_time": 1785385010307.8342,
+        "duration_ms": 47912.04,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "66ee95f23e3c4654",
+        "parent_id": "52885e69e99544cd",
+        "name": "llm.get_next_action",
+        "start_time": 1785385022683.6946,
+        "end_time": 1785385096968.677,
+        "duration_ms": 74284.98,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "abe197c380e54524",
+        "parent_id": "52885e69e99544cd",
+        "name": "llm.get_next_action",
+        "start_time": 1785385109402.6775,
+        "end_time": 1785385163479.0032,
+        "duration_ms": 54076.33,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      }
+    ]
+  }
+]

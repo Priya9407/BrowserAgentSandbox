@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aegis Vigilis</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+
+  <body>
+    <div class="panel" id="panel">
+
+      <!-- ── Header (mirrors .app-header) ──────────────────────── -->
+      <header class="panel-header">
+
+        <!-- Brand (mirrors .header-brand) -->
+        <div class="brand">
+          <div class="brand-shield">
+            <img src="icons/icon128.png" class="brand-logo" alt="Aegis Vigilis" />
+          </div>
+          <div class="brand-text">
+            <span class="panel-title">AEGIS VIGILIS</span>
+            <span class="panel-subtitle">Shield behind every agent</span>
+          </div>
+        </div>
+
+        <!-- Connection status pill (mirrors .nav-status) -->
+        <span class="status-pill">
+          <span id="ws-dot" class="dot dot-yellow"></span>
+          <span id="ws-label" class="dot-label">Connecting…</span>
+        </span>
+
+      </header>
+
+      <!-- ── Tab context row ────────────────────────────────────── -->
+      <div class="panel-hero">
+        <div id="tab-context-row" class="tab-context-row">
+          <span class="tab-context-icon">🌐</span>
+          <span id="tab-url-label" class="tab-url-label">Loading tab…</span>
+          <button id="refresh-context-btn" class="icon-btn" aria-label="Refresh context">↻</button>
+        </div>
+      </div>
+
+      <!-- ── Message thread (mirrors .chat-messages) ───────────── -->
+      <div id="messages" class="messages">
+
+        <!-- Empty state injected by JS; template shown here for reference:
+        <div class="status-line status-step">
+          <span class="status-icon">🛡️</span>
+          <span class="status-text">Describe a goal below to start the agent.</span>
+        </div>
+        -->
+
+      </div>
+
+      <!-- ── CAPTCHA / pause banner (mirrors .captcha-banner) ──── -->
+      <div id="captcha-banner" class="captcha-banner hidden">
+        <span class="captcha-icon">⏸</span>
+        <span class="captcha-text">
+          CAPTCHA detected — solve it in the browser window, then click Resume.
+        </span>
+        <button id="captcha-resume-btn" class="captcha-resume-btn">
+          I solved it — Resume
+        </button>
+      </div>
+
+      <!-- ── Input bar (mirrors .chat-input-row) ───────────────── -->
+      <div class="input-shell">
+        <div class="input-bar">
+          <textarea
+            id="goal-input"
+            class="goal-input"
+            rows="2"
+            placeholder="Type a goal and press Enter…"
+          ></textarea>
+          <button id="send-btn" class="send-btn" disabled>Run Agent</button>
+        </div>
+      </div>
+
+    </div><!-- /.panel -->
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

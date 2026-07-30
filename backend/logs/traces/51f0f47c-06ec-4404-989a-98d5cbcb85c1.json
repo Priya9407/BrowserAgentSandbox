@@ -1,0 +1,29 @@
+[
+  {
+    "trace_id": "51f0f47c-06ec-4404-989a-98d5cbcb85c1",
+    "id": "ee548c0864314f2c",
+    "name": "chat_task",
+    "start_time": 1785310751269.4841,
+    "end_time": 1785310767386.0615,
+    "duration_ms": 16116.58,
+    "metadata": {
+      "user_task": "Search for the Sony WH-1000XM5 headphones and tell me the current price",
+      "screenshot_url": "file://C:\\Users\\archi\\Documents\\Github\\BrowserAgentSandbox\\backend\\logs\\screenshots\\51f0f47c-06ec-4404-989a-98d5cbcb85c1.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 16.12
+    },
+    "subsegments": [
+      {
+        "id": "9a8781c69c3445a2",
+        "parent_id": "ee548c0864314f2c",
+        "name": "planner.generate_plan",
+        "start_time": 1785310751269.4841,
+        "end_time": 1785310761013.6445,
+        "duration_ms": 9744.16,
+        "metadata": {},
+        "error": null
+      }
+    ]
+  }
+]

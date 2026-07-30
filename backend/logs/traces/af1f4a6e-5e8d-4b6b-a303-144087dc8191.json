@@ -1,0 +1,29 @@
+[
+  {
+    "trace_id": "af1f4a6e-5e8d-4b6b-a303-144087dc8191",
+    "id": "e14c0946c9d6444c",
+    "name": "chat_task",
+    "start_time": 1785310338567.4963,
+    "end_time": 1785310360832.4736,
+    "duration_ms": 22264.98,
+    "metadata": {
+      "user_task": "Find the cheapest one-way flight from Delhi to Goa next week and report the price and airline",
+      "screenshot_url": "file://C:\\Users\\archi\\Documents\\Github\\BrowserAgentSandbox\\backend\\logs\\screenshots\\af1f4a6e-5e8d-4b6b-a303-144087dc8191.png",
+      "success_count": 0,
+      "fail_count": 0,
+      "elapsed_seconds": 22.26
+    },
+    "subsegments": [
+      {
+        "id": "5a352316f0d24f5b",
+        "parent_id": "e14c0946c9d6444c",
+        "name": "planner.generate_plan",
+        "start_time": 1785310338568.4932,
+        "end_time": 1785310351614.8335,
+        "duration_ms": 13046.34,
+        "metadata": {},
+        "error": null
+      }
+    ]
+  }
+]
