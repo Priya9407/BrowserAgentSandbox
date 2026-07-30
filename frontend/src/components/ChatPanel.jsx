@@ -20,36 +20,30 @@ const STATUS_ICON = {
   error:    "❌",
 };
 
-// ---------------------------------------------------------------------------
-// Demo task chips — use local static pages for zero network dependency.
-// Each entry with a `demo_task_key` is routed to POST /chat-demo (scripted,
-// instant, deterministic).  Entries without a key fall through to POST /chat
-// (live LLM pipeline) — none currently, but the shape supports it.
-//
-// file:// URLs here are informational only (shown in the URL field if the
-// user toggles it); the actual page URI is resolved server-side in
-// demo_scripts.py so the backend path is always correct regardless of OS.
-// ---------------------------------------------------------------------------
+// Demo task suggestions — prefer simple, reliable pages for demo lock
 const DEMO_TASKS = [
   {
-    label:         "Product price",
-    goal:          "Search for the SoundWave Buds Lite earbuds and tell me the current price",
-    demo_task_key: "product_price",
+    label: "Product price",
+    goal:  "Search for the Sony WH-1000XM5 headphones and tell me the current price",
+    // Use a simple search results page (less dynamic than travel widgets)
+    url:   "https://www.google.com/search?q=Sony+WH-1000XM5+price",
   },
   {
-    label:         "Check a flight",
-    goal:          "Find a flight result on SkyHigh Flights and report the price",
-    demo_task_key: "check_flight",
+    label: "Check a flight (simple)",
+    goal:  "Find one flight result for Delhi to Goa next week and report the price and airline",
+    // Use a generic search for flights instead of the Google Flights widget which can be flaky
+    url:   "https://www.google.com/search?q=delhi+to+goa+flight+one+way+next+week",
   },
   {
-    label:         "Buy laptop",
-    goal:          "Buy the laptop listed on the shopping page",
-    demo_task_key: "buy_laptop",
+    label: "Restaurant hours",
+    goal:  "Look up the opening hours of Domino's Pizza in Bangalore and report them",
+    url:   "https://www.google.com/search?q=Dominos+Pizza+Bangalore+opening+hours",
   },
   {
-    label:         "Restaurant hours",
-    goal:          "Look up the opening hours of Spice Garden restaurant and report them",
-    demo_task_key: "restaurant_hours",
+    label: "Example site",
+    goal:  "Open example.com and tell me the page title",
+    // A static, highly reliable page for demos
+    url:   "https://example.com/",
   },
 ];
 
@@ -121,162 +115,119 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   const [captchaPending, setCaptchaPending] = useState(false);
   const [askPending, setAskPending]   = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
-  const [askOptions, setAskOptions]   = useState([]);
   const [askAnswer, setAskAnswer]     = useState("");
   // Clarification state (pre-task questions)
-  // Now stores ALL questions at once for simultaneous display.
   const [clarifyQueue, setClarifyQueue]   = useState([]); // [{question, index, total}]
-  const [clarifyAnswers, setClarifyAnswers] = useState({}); // {[index]: "answer"}
-  const [clarifyTotal, setClarifyTotal]   = useState(0);
-  const [clarifyTimedOut, setClarifyTimedOut] = useState(false); // true after 10s if questions hang
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
   const clarifySessionRef = useRef(null);
-  const clarifySubmittedRef = useRef(false); // true after user clicks Start Task — prevents late "ask" events from re-opening banner
   const replanSeenRef                 = useRef(false);  // track whether a re-plan occurred this run
   const stepTimelineRef               = useRef([]);     // mirrors stepTimeline, read at terminal event
   const taskStartRef                  = useRef(null);    // Date.now() when a task starts, for elapsed time
   const bottomRef                     = useRef(null);
   const inputRef                      = useRef(null);
-  const processedEventCountRef        = useRef(0);    // tracks how many socketEvents have been consumed
 
-  // -------------------------------------------------------------------------
-  // Consume WebSocket events
-  // -------------------------------------------------------------------------
   // -------------------------------------------------------------------------
   // Consume WebSocket events
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!socketEvents || socketEvents.length === 0) return;
+    const evt = socketEvents[0];
 
-    const prevCount = processedEventCountRef.current;
-    const currentCount = socketEvents.length;
-    processedEventCountRef.current = currentCount;
-    const newEventCount = currentCount - prevCount;
-    if (newEventCount <= 0) return;
+    if (evt.type !== "chat_status") return;
+    if (activeSessionId && evt.session_id !== activeSessionId) return;
 
-    // Events are prepended (newest at index 0). New events are at indices
-    // [0, newEventCount). Process them in chronological order (oldest first):
-    // iterate from newEventCount-1 down to 0.
-    for (let j = newEventCount - 1; j >= 0; j--) {
-      const evt = socketEvents[j];
+    const { status, text, step_event: se } = evt;
 
-      if (evt.type !== "chat_status") continue;
-      if (activeSessionId && evt.session_id !== activeSessionId) continue;
+    // ── Clarification questions (pre-task) ──────────────────────────────────
+    if (status === "ask" && se && se.ask_question != null && se.ask_index != null) {
+      clarifySessionRef.current = evt.session_id;
+      setClarifyQueue(prev => {
+        // Only add if not already in queue
+        if (prev.some(q => q.index === se.ask_index)) return prev;
+        return [...prev, { question: se.ask_question, index: se.ask_index, total: se.ask_total }];
+      });
+      return;
+    }
 
-      const { status, text, step_event: se } = evt;
+    // Once all questions answered (status=planning with outcome=resolved), clear queue
+    if (status === "planning" && se && se.outcome === "resolved") {
+      setClarifyQueue([]);
+      clarifySessionRef.current = null;
+    }
 
-      // ── Clarification questions (pre-task) ────────────────────────────────
-      // Skip late "ask" events after the user has already submitted answers
-      if (status === "ask" && se && se.ask_question != null && se.ask_index != null) {
-        if (clarifySubmittedRef.current) continue; // already submitted — ignore orphaned questions
-        clarifySessionRef.current = evt.session_id;
-        setClarifyTotal(se.ask_total || 1);
-        setClarifyQueue(prev => {
-          // Only add if not already in queue
-          if (prev.some(q => q.index === se.ask_index)) return prev;
-          return [...prev, { question: se.ask_question, index: se.ask_index, total: se.ask_total }];
-        });
-        continue;
-      }
+    // ── Update step timeline ────────────────────────────────────────────────
+    if (se && typeof se.step_number === "number") {
+      // Detect re-plan: the re-plan recovery emits "↻ Re-planning" in text
+      const isReplan =
+        text.startsWith("↻") || (se.outcome === "failed" && replanSeenRef.current);
 
-      // Once all questions answered (status=planning with outcome=resolved), clear queue
-      if (status === "planning" && se && se.outcome === "resolved") {
-        setClarifyQueue([]);
-        setClarifyAnswers({});
-        setClarifyTotal(0);
-        clarifySessionRef.current = null;
-      }
-
-      // ── Update step timeline ──────────────────────────────────────────────
-      if (se && typeof se.step_number === "number") {
-        // Detect re-plan: the re-plan recovery emits "↻ Re-planning" in text
-        const isReplan =
-          text.startsWith("↻") || (se.outcome === "failed" && replanSeenRef.current);
-
-        // CAPTCHA or Ask pause/resume — show or hide the Resume banners
-        if (se.outcome === "paused") {
-          if (se.ask_question) {
-            setAskPending(true);
-            setAskQuestion(se.ask_question);
-            setAskOptions(se.ask_options || []);
-          } else {
-            setCaptchaPending(true);
-          }
+      // CAPTCHA or Ask pause/resume — show or hide the Resume banners
+      if (se.outcome === "paused") {
+        if (se.ask_question) {
+          setAskPending(true);
+          setAskQuestion(se.ask_question);
         } else {
-          setCaptchaPending(false);
-          setAskPending(false);
-          setAskOptions([]);
+          setCaptchaPending(true);
         }
-
-        if (text.startsWith("↻ New plan")) {
-          replanSeenRef.current = true;
-        }
-
-        setTimeline(prev => {
-          const next = upsertStep(prev, se, isReplan);
-          stepTimelineRef.current = next;
-          return next;
-        });
-
-        // Step events don't add a flat message — the timeline IS the history.
-        continue;
+      } else {
+        setCaptchaPending(false);
+        setAskPending(false);
       }
 
-      // ── Flat message (planning / done / error / re-plan announcement) ─────
-      const isTerminal = status === "done" || status === "error";
-      if (isTerminal) {
-        setRunning(false);
-        replanSeenRef.current = false;
-
-        // Build the done-summary card from the timeline gathered so far.
-        const timeline = stepTimelineRef.current;
-        const successCount = timeline.filter(s => s.outcome === "success").length;
-        const failCount = timeline.filter(
-          s => s.outcome === "failed" || s.outcome === "skipped"
-        ).length;
-        const elapsedSeconds = taskStartRef.current
-          ? ((Date.now() - taskStartRef.current) / 1000).toFixed(1)
-          : null;
-
-        setSummary({
-          status,
-          text,
-          successCount,
-          failCount,
-          totalSteps: timeline.length,
-          elapsedSeconds,
-        });
+      if (text.startsWith("↻ New plan")) {
+        replanSeenRef.current = true;
       }
 
-      // Don't repeat identical consecutive messages
-      setMessages(prev => {
-        if (prev.length > 0 && prev[prev.length - 1].text === text) return prev;
-        return [
-          ...prev,
-          {
-            id:     `${evt.session_id ?? "s"}-${Date.now()}-${prev.length}`,
-            role:   "status",
-            status,
-            text,
-          },
-        ];
+      setTimeline(prev => {
+        const next = upsertStep(prev, se, isReplan);
+        stepTimelineRef.current = next;
+        return next;
+      });
+
+      // Step events don't add a flat message — the timeline IS the history.
+      return;
+    }
+
+    // ── Flat message (planning / done / error / re-plan announcement) ───────
+    const isTerminal = status === "done" || status === "error";
+    if (isTerminal) {
+      setRunning(false);
+      replanSeenRef.current = false;
+
+      // Build the done-summary card from the timeline gathered so far.
+      const timeline = stepTimelineRef.current;
+      const successCount = timeline.filter(s => s.outcome === "success").length;
+      const failCount = timeline.filter(
+        s => s.outcome === "failed" || s.outcome === "skipped"
+      ).length;
+      const elapsedSeconds = taskStartRef.current
+        ? ((Date.now() - taskStartRef.current) / 1000).toFixed(1)
+        : null;
+
+      setSummary({
+        status,
+        text,
+        successCount,
+        failCount,
+        totalSteps: timeline.length,
+        elapsedSeconds,
       });
     }
+
+    // Don't repeat identical consecutive messages
+    setMessages(prev => {
+      if (prev.length > 0 && prev[prev.length - 1].text === text) return prev;
+      return [
+        ...prev,
+        {
+          id:     `${evt.session_id ?? "s"}-${Date.now()}-${prev.length}`,
+          role:   "status",
+          status,
+          text,
+        },
+      ];
+    });
   }, [socketEvents, activeSessionId]);
-
-  // ── Fallback timeout: if questions don't arrive within 10s, enable the form anyway ──
-  useEffect(() => {
-    if (clarifyQueue.length > 0 && clarifyQueue.length < clarifyTotal && clarifyTotal > 0) {
-      const timer = setTimeout(() => {
-        setClarifyTimedOut(true);
-      }, 10000);
-      return () => clearTimeout(timer);
-    } else {
-      setClarifyTimedOut(false);
-    }
-  }, [clarifyQueue.length, clarifyTotal]);
-
-  // Derived — the form is ready when all questions have arrived OR timed out
-  const clarifyReady = clarifyQueue.length >= clarifyTotal || clarifyTimedOut;
 
   // Auto-scroll
   useEffect(() => {
@@ -286,16 +237,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   // -------------------------------------------------------------------------
   // Submit
   // -------------------------------------------------------------------------
-
-  /**
-   * handleSubmit — called by both the free-text Send button and the demo chips.
-   *
-   * @param {string}      [goalText]     - pre-filled goal (demo chips only)
-   * @param {string}      [startUrl]     - pre-filled URL (free-text path only)
-   * @param {string|null} [demoTaskKey]  - if set, routes to POST /chat-demo
-   *                                      instead of POST /chat
-   */
-  const handleSubmit = async (goalText, startUrl, demoTaskKey) => {
+  const handleSubmit = async (goalText, startUrl) => {
     const goal = (goalText ?? input).trim();
     if (!goal || running) return;
 
@@ -310,7 +252,6 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     stepTimelineRef.current = [];
     taskStartRef.current = Date.now();
     replanSeenRef.current = false;
-    clarifySubmittedRef.current = false;  // reset for new task
 
     setMessages(prev => [
       ...prev,
@@ -318,25 +259,6 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     ]);
 
     try {
-      // ── Demo chip path → /chat-demo (scripted, no LLM) ─────────────────
-      if (demoTaskKey) {
-        const res = await fetch("http://localhost:8000/chat-demo", {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ demo_task_key: demoTaskKey, headless: false }),
-        });
-
-        if (!res.ok) {
-          const errText = await res.text().catch(() => res.statusText);
-          throw new Error(`Server returned ${res.status}: ${errText}`);
-        }
-
-        const data = await res.json();
-        onSessionStart?.(data.session_id);
-        return;
-      }
-
-      // ── Free-text path → /chat (live LLM pipeline, unchanged) ──────────
       const res = await fetch("http://localhost:8000/chat", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -378,16 +300,11 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     setSummary(null);
     setCaptchaPending(false);
     setAskPending(false);
-    setAskOptions([]);
     setClarifyQueue([]);
-    setClarifyAnswers({});
-    setClarifyTotal(0);
-    setClarifyTimedOut(false);
+    setClarifyAnswer("");
     clarifySessionRef.current = null;
-    clarifySubmittedRef.current = false;
     stepTimelineRef.current = [];
     taskStartRef.current = null;
-    processedEventCountRef.current = 0;
     setRunning(false);
     replanSeenRef.current = false;
   };
@@ -446,85 +363,33 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   const handleSubmitClarification = async (e) => {
     e.preventDefault();
     if (!clarifySessionRef.current || !clarifyQueue.length) return;
+    const current = clarifyQueue[0]; // answer them one at a time
     const sessionId = clarifySessionRef.current;
+    const answer = clarifyAnswer.trim();
+    if (!answer) return;
 
-    // Submit ALL questions in order
-    let taskStarted = false;
-    for (const q of clarifyQueue) {
-      const answer = (clarifyAnswers[q.index] || "").trim();
-      if (!answer) {
-        // Focus the unanswered question
-        const inputEl = document.getElementById(`clarify-input-${q.index}`);
-        inputEl?.focus();
-        return;
+    // Remove the first question from the queue
+    setClarifyQueue(prev => prev.slice(1));
+    setClarifyAnswer("");
+
+    try {
+      const resp = await fetch("http://localhost:8000/resolve-clarification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question_index: current.index,
+          answer,
+        }),
+      });
+      const data = await resp.json();
+      if (data.status === "started") {
+        // Agent is now running
+        setRunning(true);
       }
-
-      try {
-        const resp = await fetch("http://localhost:8000/resolve-clarification", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: sessionId,
-            question_index: q.index,
-            answer,
-          }),
-        });
-        const data = await resp.json();
-        if (data.status === "started") {
-          taskStarted = true;
-        }
-      } catch (err) {
-        console.error("Failed to submit clarification:", err);
-      }
+    } catch (err) {
+      console.error("Failed to submit clarification:", err);
     }
-
-    // Build Q&A summary for chat history
-    const qaLines = clarifyQueue.map(q =>
-      `Q: ${q.question}\nA: ${clarifyAnswers[q.index] || ""}`
-    );
-
-    if (taskStarted) {
-      // All questions answered — agent is starting now
-      setMessages(prev => [
-        ...prev,
-        {
-          id:   `qa-${Date.now()}`,
-          role: "user",
-          text: qaLines.join("\n\n"),
-        },
-      ]);
-      setRunning(true);
-    } else {
-      // Partial answers submitted (Continue Anyway with fewer questions)
-      // Show Q&A + a status message so the user isn't left staring at stale inputs
-      setMessages(prev => [
-        ...prev,
-        {
-          id:   `qa-${Date.now()}`,
-          role: "user",
-          text: qaLines.join("\n\n"),
-        },
-        {
-          id:   `status-wait-${Date.now()}`,
-          role: "status",
-          status: "step",
-          text: "📤 Answers submitted — waiting for remaining questions to arrive via WebSocket…",
-        },
-      ]);
-    }
-
-    // Mark submitted — prevents late "ask" WebSocket events from re-opening the banner
-    clarifySubmittedRef.current = true;
-
-    // Clear the banner in ALL cases — prevent stale-input dead-end
-    setClarifyQueue([]);
-    setClarifyAnswers({});
-    setClarifyTotal(0);
-    setClarifyTimedOut(false);
-  };
-
-  const handleClarifyChange = (index, value) => {
-    setClarifyAnswers(prev => ({ ...prev, [index]: value }));
   };
 
   // -------------------------------------------------------------------------
@@ -560,7 +425,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
                 <button
                   key={t.label}
                   className="demo-chip"
-                  onClick={() => handleSubmit(t.goal, undefined, t.demo_task_key)}
+                  onClick={() => handleSubmit(t.goal, t.url)}
                   disabled={running}
                 >
                   {t.label}
@@ -649,131 +514,37 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           </div>
         )}
 
-        {/* ── Pre-task Clarification — ALL questions shown at once ── */}
-        {clarifyQueue.length > 0 && (
-          <div className="captcha-banner" style={{
-            borderColor: "#6366f1",
-            background: "rgba(99,102,241,0.12)",
-            padding: "16px",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-              <span className="captcha-banner-icon">🤖</span>
-              <span style={{ fontSize: "11px", color: "#a5b4fc", fontWeight: 600 }}>
-                {clarifyQueue.length < clarifyTotal
-                  ? `Loading ${clarifyTotal} question${clarifyTotal !== 1 ? "s" : ""}… (${clarifyQueue.length}/${clarifyTotal} received)`
-                  : `Please answer ${clarifyTotal} question${clarifyTotal !== 1 ? "s" : ""} to continue`
-                }
+        {/* ── Pre-task Clarification banner ─────────────────────────── */}
+        {clarifyQueue.length > 0 && (() => {
+          const current = clarifyQueue[0];
+          const answeredCount = current.total - clarifyQueue.length;
+          return (
+            <div className="captcha-banner" style={{ borderColor: "#6366f1", background: "rgba(99,102,241,0.12)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <span className="captcha-banner-icon">🤖</span>
+                <span style={{ fontSize: "11px", color: "#a5b4fc", fontWeight: 600 }}>
+                  Question {answeredCount + 1} of {current.total}
+                </span>
+              </div>
+              <span className="captcha-banner-text" style={{ color: "#e0e7ff" }}>
+                {current.question}
               </span>
+              <form onSubmit={handleSubmitClarification} style={{ display: "flex", gap: "8px", marginTop: "8px", width: "100%" }}>
+                <input
+                  type="text"
+                  value={clarifyAnswer}
+                  onChange={e => setClarifyAnswer(e.target.value)}
+                  style={{ flex: 1, padding: "6px 10px", borderRadius: "6px", border: "1px solid #6366f1", background: "rgba(99,102,241,0.15)", color: "white" }}
+                  placeholder="Your answer…"
+                  autoFocus
+                />
+                <button type="submit" className="captcha-resume-btn" style={{ background: "#6366f1" }}>
+                  {answeredCount + 1 < current.total ? "Next →" : "Start Task ▶"}
+                </button>
+              </form>
             </div>
-
-            <form onSubmit={handleSubmitClarification}>
-              {clarifyQueue.map((q, i) => (
-                <div key={q.index} style={{ marginBottom: i < clarifyQueue.length - 1 ? "14px" : "10px" }}>
-                  <div style={{
-                    fontSize: "13px",
-                    color: "#c7d2fe",
-                    fontWeight: 500,
-                    marginBottom: "6px",
-                    lineHeight: 1.4,
-                  }}>
-                    <span style={{ color: "#818cf8", marginRight: "6px", fontWeight: 700 }}>
-                      {i + 1}.
-                    </span>
-                    {q.question}
-                  </div>
-                  <input
-                    id={`clarify-input-${q.index}`}
-                    type="text"
-                    value={clarifyAnswers[q.index] || ""}
-                    onChange={e => handleClarifyChange(q.index, e.target.value)}
-                    disabled={clarifyQueue.length < clarifyTotal}
-                    style={{
-                      width: "100%",
-                      padding: "8px 12px",
-                      borderRadius: "8px",
-                      border: "1px solid #4f46e5",
-                      background: clarifyQueue.length < clarifyTotal
-                        ? "rgba(99,102,241,0.06)"
-                        : "rgba(99,102,241,0.12)",
-                      color: "white",
-                      fontSize: "13px",
-                      outline: "none",
-                      boxSizing: "border-box",
-                      opacity: clarifyQueue.length < clarifyTotal ? 0.5 : 1,
-                    }}
-                    placeholder={clarifyQueue.length < clarifyTotal ? "Loading…" : "Your answer…"}
-                    autoFocus={i === 0 && clarifyQueue.length >= clarifyTotal}
-                  />
-                </div>
-              ))}
-
-              {/* Show loading spinner while questions are still arriving */}
-              {!clarifyReady && clarifyQueue.length < clarifyTotal && (
-                <>
-                  <div style={{
-                    textAlign: "center",
-                    padding: "12px 0 4px",
-                    fontSize: "12px",
-                    color: "#a5b4fc",
-                  }}>
-                    <span style={{ animation: "pulse 1.5s ease-in-out infinite", display: "inline-block" }}>
-                      ⏳ Receiving questions…
-                    </span>
-                  </div>
-                  {/* „Continue anyway“ button when loading hangs */}
-                  <button
-                    type="button"
-                    onClick={() => setClarifyTimedOut(true)}
-                    style={{
-                      background: "transparent",
-                      border: "1px solid #6366f1",
-                      color: "#a5b4fc",
-                      width: "100%",
-                      marginTop: "4px",
-                      padding: "8px 0",
-                      fontWeight: 600,
-                      fontSize: "12px",
-                      borderRadius: "8px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Continue anyway →
-                  </button>
-                </>
-              )}
-
-              {/* Show Start Task when ready (all questions arrived OR timed out) */}
-              {clarifyReady && (
-                <>
-                  {clarifyTimedOut && (
-                    <div style={{
-                      textAlign: "center",
-                      padding: "6px 0 8px",
-                      fontSize: "11px",
-                      color: "#f59e0b",
-                      fontWeight: 500,
-                    }}>
-                      ⚠ Not all questions loaded — answering what we have
-                    </div>
-                  )}
-                  <button
-                    type="submit"
-                    className="captcha-resume-btn"
-                    style={{
-                      background: "#6366f1",
-                      width: "100%",
-                      marginTop: "4px",
-                      padding: "10px 0",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Start Task ▶
-                  </button>
-                </>
-              )}
-            </form>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ── CAPTCHA pause banner ─────────────────────────────────────── */}
         {captchaPending && (
@@ -799,66 +570,22 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
             <span className="captcha-banner-text">
               {askQuestion}
             </span>
-
-            {/* Check if there are clickable options — render chips */}
-            {(askOptions.length > 0) ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "8px", width: "100%" }}>
-                {askOptions.map((opt, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={async () => {
-                      setAskAnswer(opt);
-                      setAskPending(false);
-                      if (activeSessionId) {
-                        try {
-                          await fetch("http://localhost:8000/resolve-ask", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ session_id: activeSessionId, answer: opt }),
-                          });
-                        } catch (err) {
-                          console.error("Failed to submit choice:", err);
-                        }
-                      }
-                    }}
-                    style={{
-                      background: "rgba(99,102,241,0.15)",
-                      border: "1px solid #6366f1",
-                      borderRadius: "8px",
-                      padding: "8px 14px",
-                      color: "#c7d2fe",
-                      fontSize: "13px",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      transition: "background 0.15s",
-                      textAlign: "left",
-                    }}
-                    onMouseEnter={e => e.target.style.background = "rgba(99,102,241,0.3)"}
-                    onMouseLeave={e => e.target.style.background = "rgba(99,102,241,0.15)"}
-                  >
-                    {opt}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <form onSubmit={handleSubmitAsk} style={{ display: "flex", gap: "8px", marginTop: "8px", width: "100%" }}>
-                <input
-                  type="text"
-                  value={askAnswer}
-                  onChange={e => setAskAnswer(e.target.value)}
-                  style={{ flex: 1, padding: "6px", borderRadius: "4px", border: "1px solid #ccc", background: "rgba(255, 255, 255, 0.1)", color: "white" }}
-                  placeholder="Type your answer here..."
-                  autoFocus
-                />
-                <button
-                  type="submit"
-                  className="captcha-resume-btn"
-                >
-                  Submit Answer
-                </button>
-              </form>
-            )}
+            <form onSubmit={handleSubmitAsk} style={{ display: "flex", gap: "8px", marginTop: "8px", width: "100%" }}>
+              <input
+                type="text"
+                value={askAnswer}
+                onChange={e => setAskAnswer(e.target.value)}
+                style={{ flex: 1, padding: "6px", borderRadius: "4px", border: "1px solid #ccc", background: "rgba(255, 255, 255, 0.1)", color: "white" }}
+                placeholder="Type your answer here..."
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="captcha-resume-btn"
+              >
+                Submit Answer
+              </button>
+            </form>
           </div>
         )}
 

@@ -56,13 +56,6 @@ if (typeof window.__frontierInjected === "undefined") {
         sendResponse({ text: document.body.innerText ?? "" });
         return false;
 
-      case "GET_FULL_PAGE_STATE":
-        sendResponse({
-          visibleText: document.body.innerText ?? "",
-          accessibilityTree: _getAccessibilityTree(),
-        });
-        return false;
-
       case "SET_AGENT_ACTIVE":
         _setIndicator(msg.active);
         sendResponse({ ok: true });
@@ -216,146 +209,6 @@ if (typeof window.__frontierInjected === "undefined") {
   }
 
   // -------------------------------------------------------------------------
-  // Accessibility tree extraction (structured, filtered observation)
-  // Builds a labelled tree of interactive elements with their roles, names,
-  // states, and visible text — instead of sending raw DOM/innerText to the LLM.
-  // -------------------------------------------------------------------------
-  function _getAccessibilityTree() {
-    const top = _buildA11ySubtree(document.body, 0, 3);
-    return top;
-  }
-
-  function _buildA11ySubtree(node, depth, maxDepth) {
-    if (depth > maxDepth || !node || node.nodeType !== Node.ELEMENT_NODE) {
-      return null;
-    }
-
-    const el = node;
-    const tag = el.tagName.toLowerCase();
-
-    // Skip non-interactive or hidden containers at depth > 0
-    if (depth > 0) {
-      const style = window.getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden" ||
-          parseFloat(style.opacity) < 0.05) {
-        return null;
-      }
-    }
-
-    // Determine ARIA role
-    let role = el.getAttribute("role") || "";
-    if (!role) {
-      const roleMap = {
-        "a": "link",
-        "button": "button",
-        "input[type=submit]": "button",
-        "input[type=button]": "button",
-        "input[type=checkbox]": "checkbox",
-        "input[type=radio]": "radio",
-        "input[type=text]": "textbox",
-        "input[type=search]": "searchbox",
-        "input[type=email]": "textbox",
-        "input[type=password]": "textbox",
-        "textarea": "textbox",
-        "select": "combobox",
-        "nav": "navigation",
-        "main": "main",
-        "header": "banner",
-        "footer": "contentinfo",
-        "img": "img",
-      };
-
-      for (const [selector, mappedRole] of Object.entries(roleMap)) {
-        try {
-          if (el.matches(selector)) {
-            role = mappedRole;
-            break;
-          }
-        } catch (_) {}
-      }
-    }
-
-    // Get accessible name
-    const ariaLabel = el.getAttribute("aria-label") || "";
-    let name = ariaLabel;
-    if (!name) {
-      const ariaLabelledby = el.getAttribute("aria-labelledby");
-      if (ariaLabelledby) {
-        const labelEl = document.getElementById(ariaLabelledby);
-        if (labelEl) name = labelEl.textContent?.trim() || "";
-      }
-    }
-    if (!name && el.textContent) {
-      name = el.textContent.trim().substring(0, 200);
-    }
-
-    // Get state
-    const state = {};
-    if (el.hasAttribute("disabled")) state.disabled = true;
-    if (el.hasAttribute("checked")) state.checked = true;
-    if (el.hasAttribute("aria-expanded")) {
-      state.expanded = el.getAttribute("aria-expanded") === "true";
-    }
-    if (el.hasAttribute("aria-selected")) {
-      state.selected = el.getAttribute("aria-selected") === "true";
-    }
-    if (el.getAttribute("aria-hidden") === "true") {
-      state.hidden = true;
-    }
-    if (el.value !== undefined && el.value !== null && el.hasAttribute("value")) {
-      state.value = String(el.value).substring(0, 100);
-    }
-    if (el.placeholder) {
-      state.placeholder = el.placeholder;
-    }
-
-    // Only include meaningful interactive or structural elements
-    const interestingRoles = [
-      "button", "link", "textbox", "searchbox", "combobox", "checkbox",
-      "radio", "listbox", "menuitem", "heading", "img", "navigation",
-      "main", "banner", "contentinfo", "form", "search", "dialog",
-      "alert", "status", "tab", "tablist", "treeitem", "gridcell",
-    ];
-
-    const entry = {
-      tag,
-      role: role || "generic",
-      name: name.substring(0, 150),
-    };
-
-    if (Object.keys(state).length > 0) {
-      entry.state = state;
-    }
-
-    // Recurse into children for interesting containers
-    const isInterestingContainer = interestingRoles.includes(role) ||
-                                   tag === "section" || tag === "article" ||
-                                   tag === "div" || tag === "form" ||
-                                   tag === "ul" || tag === "ol" ||
-                                   tag === "table";
-
-    if (isInterestingContainer || depth < 1) {
-      const children = [];
-      for (const child of el.children) {
-        const childTree = _buildA11ySubtree(child, depth + 1, maxDepth);
-        if (childTree) {
-          children.push(childTree);
-        }
-      }
-      if (children.length > 0) {
-        entry.children = children;
-      }
-    }
-
-    // Only return if it has a meaningful name, role, or children
-    if (entry.name || entry.children?.length > 0 ||
-        interestingRoles.includes(role)) {
-      return entry;
-    }
-    return null;
-  }
-
-  // -------------------------------------------------------------------------
   // Agent active indicator
   // -------------------------------------------------------------------------
   function _setIndicator(active) {
@@ -369,7 +222,7 @@ if (typeof window.__frontierInjected === "undefined") {
       banner.id = ID;
       banner.innerHTML = `
         <span style="font-size:14px;">🤖</span>
-        <span style="flex:1;font-weight:700;">Frontier Agent is active on this tab</span>
+        <span style="flex:1;font-weight:700;">Aegis Vigilis is active on this tab</span>
         <button id="__frontier-dismiss" style="
           background:none;border:1px solid rgba(255,255,255,0.5);
           border-radius:6px;color:#fff;font-size:11px;padding:3px 10px;

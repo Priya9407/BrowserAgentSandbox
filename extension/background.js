@@ -66,30 +66,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true; // keep channel open for async response
     }
 
-    // ── GET_FULL_TAB_CONTEXT ───────────────────────────────────────────────
-    // Used by the verify loop — returns visible text AND accessibility tree
-    // so the backend can see the structured page state after each action.
-    case "GET_FULL_TAB_CONTEXT": {
-      _getActiveTab().then(tab => {
-        if (!tab) return sendResponse({ error: "No active tab" });
-
-        chrome.tabs.sendMessage(
-          tab.id,
-          { type: "GET_FULL_PAGE_STATE" },
-          (result) => {
-            sendResponse({
-              url:               tab.url   ?? "",
-              title:             tab.title ?? "",
-              visibleText:       result?.visibleText ?? "",
-              accessibilityTree: result?.accessibilityTree ?? null,
-              tabId:             tab.id,
-            });
-          }
-        );
-      });
-      return true;
-    }
-
     // ── EXECUTE_ACTION ─────────────────────────────────────────────────────
     case "EXECUTE_ACTION": {
       const { action } = msg;

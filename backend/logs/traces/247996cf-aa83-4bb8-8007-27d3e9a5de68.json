@@ -1,0 +1,131 @@
+[
+  {
+    "trace_id": "247996cf-aa83-4bb8-8007-27d3e9a5de68",
+    "id": "ee6f783c9f3b4371",
+    "name": "demo_task",
+    "start_time": 1785407579774.1453,
+    "end_time": 1785407609027.902,
+    "duration_ms": 29253.76,
+    "metadata": {
+      "user_task": "Look up the opening hours of Spice Garden restaurant and report them",
+      "screenshot_url": "file://C:\\Users\\Nithya\\OneDrive\\Documents\\projects\\frontier\\BrowserAgentSandbox\\backend\\logs\\screenshots\\247996cf-aa83-4bb8-8007-27d3e9a5de68.png",
+      "success_count": 3,
+      "fail_count": 0,
+      "elapsed_seconds": 29.25,
+      "demo_task_key": "restaurant_hours"
+    },
+    "subsegments": [
+      {
+        "id": "24802ce548b14167",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785407586829.8467,
+        "end_time": 1785407586829.8667,
+        "duration_ms": 0.02,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "dff28dcfe4e74f6a",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "policy.evaluate",
+        "start_time": 1785407586829.941,
+        "end_time": 1785407590314.535,
+        "duration_ms": 3484.59,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "2da6eb6dfd444106",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785407595384.927,
+        "end_time": 1785407595588.0457,
+        "duration_ms": 203.12,
+        "metadata": {
+          "step": 1,
+          "action_type": "navigate"
+        },
+        "error": null
+      },
+      {
+        "id": "f4c3e51b6d3940e5",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785407596563.3486,
+        "end_time": 1785407596563.3604,
+        "duration_ms": 0.01,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "6fe1ca8c29ae4b6e",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "policy.evaluate",
+        "start_time": 1785407596563.381,
+        "end_time": 1785407597551.3203,
+        "duration_ms": 987.94,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "31cbfb06d0d04812",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785407599579.749,
+        "end_time": 1785407599586.8928,
+        "duration_ms": 7.14,
+        "metadata": {
+          "step": 2,
+          "action_type": "scroll"
+        },
+        "error": null
+      },
+      {
+        "id": "38660cc2f9c64a42",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785407600172.346,
+        "end_time": 1785407600172.3613,
+        "duration_ms": 0.02,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "1b05000a59fa4b8c",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "policy.evaluate",
+        "start_time": 1785407600172.3948,
+        "end_time": 1785407600797.5168,
+        "duration_ms": 625.12,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "e744e88171b243c3",
+        "parent_id": "ee6f783c9f3b4371",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785407603840.3826,
+        "end_time": 1785407603840.3936,
+        "duration_ms": 0.01,
+        "metadata": {
+          "step": 3,
+          "action_type": "done"
+        },
+        "error": null
+      }
+    ]
+  }
+]

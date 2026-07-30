@@ -1,0 +1,131 @@
+[
+  {
+    "trace_id": "1b67fd43-d745-4f03-8caa-87e885745e00",
+    "id": "f9207d5fe5214fd8",
+    "name": "demo_task",
+    "start_time": 1785399299622.7236,
+    "end_time": 1785399429244.8997,
+    "duration_ms": 129622.18,
+    "metadata": {
+      "user_task": "Find a flight result on SkyHigh Flights and report the price",
+      "screenshot_url": "file://C:\\Users\\Nithya\\OneDrive\\Documents\\projects\\frontier\\BrowserAgentSandbox\\backend\\logs\\screenshots\\1b67fd43-d745-4f03-8caa-87e885745e00.png",
+      "success_count": 3,
+      "fail_count": 0,
+      "elapsed_seconds": 129.62,
+      "demo_task_key": "check_flight"
+    },
+    "subsegments": [
+      {
+        "id": "d6fde0b4e66048bf",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399301210.9143,
+        "end_time": 1785399301210.934,
+        "duration_ms": 0.02,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "a5e5ea3f2e5947d1",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "policy.evaluate",
+        "start_time": 1785399301210.9717,
+        "end_time": 1785399302933.81,
+        "duration_ms": 1722.84,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "c02d8f9c9d234454",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399356565.443,
+        "end_time": 1785399356597.5105,
+        "duration_ms": 32.07,
+        "metadata": {
+          "step": 1,
+          "action_type": "navigate"
+        },
+        "error": null
+      },
+      {
+        "id": "0cf070cb9123475f",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399357168.3022,
+        "end_time": 1785399357168.3098,
+        "duration_ms": 0.01,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "b57c5f52ff27444f",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "policy.evaluate",
+        "start_time": 1785399357168.3262,
+        "end_time": 1785399358737.5642,
+        "duration_ms": 1569.24,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "77c78bde259f4932",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399378982.9067,
+        "end_time": 1785399378989.4663,
+        "duration_ms": 6.56,
+        "metadata": {
+          "step": 2,
+          "action_type": "scroll"
+        },
+        "error": null
+      },
+      {
+        "id": "a70c74f247cc4455",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399379557.7158,
+        "end_time": 1785399379557.7239,
+        "duration_ms": 0.01,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "272d8bfc332c4e69",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "policy.evaluate",
+        "start_time": 1785399379557.7412,
+        "end_time": 1785399380935.1697,
+        "duration_ms": 1377.43,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "9ad7b975ea434668",
+        "parent_id": "f9207d5fe5214fd8",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399427378.5862,
+        "end_time": 1785399427378.5925,
+        "duration_ms": 0.01,
+        "metadata": {
+          "step": 3,
+          "action_type": "done"
+        },
+        "error": null
+      }
+    ]
+  }
+]
