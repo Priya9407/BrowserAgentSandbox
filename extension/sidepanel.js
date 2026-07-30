@@ -68,6 +68,10 @@ function _connectWS() {
 
   ws.onclose = () => {
     _setWsStatus("closed");
+    if (window.__wsPingInterval) {
+      clearInterval(window.__wsPingInterval);
+      window.__wsPingInterval = null;
+    }
     // Reconnect after 2 s
     setTimeout(_connectWS, 2000);
   };
@@ -75,6 +79,16 @@ function _connectWS() {
   ws.onerror = () => {
     _setWsStatus("error");
   };
+
+  // ── Keep-alive ping every 15 seconds ──────────────────────────────────
+  if (window.__wsPingInterval) {
+    clearInterval(window.__wsPingInterval);
+  }
+  window.__wsPingInterval = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "ping" }));
+    }
+  }, 15000);
 }
 
 function _setWsStatus(status) {
@@ -115,11 +129,34 @@ function _handleWsMessage(msg) {
     // Forward the action to the content script via background
     const { action, policy } = msg;
 
-    // Only execute if ALLOW
     if (policy?.decision === "ALLOW") {
       chrome.runtime.sendMessage(
         { type: "EXECUTE_ACTION", action },
-        (result) => {
+        async (result) => {
+          // After execution, refresh the page state from the tab
+          // so we can verify what actually happened.
+          const freshCtx = await _getFreshTabContext();
+          
+          // Send the result back over WebSocket so the backend can
+          // verify and continue with the next action.
+          const actionResult = {
+            type: "action_result",
+            action_id: action.action_id,
+            session_id: sessionId,
+            ok: result?.ok ?? false,
+            error: result?.error ?? null,
+            page_state: freshCtx ? {
+              url: freshCtx.url,
+              title: freshCtx.title,
+              visible_text: freshCtx.visibleText,
+              accessibility_tree: freshCtx.accessibilityTree || null,
+            } : null,
+          };
+          
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(actionResult));
+          }
+
           if (!result?.ok) {
             _appendStatus("error", `Action failed: ${result?.error ?? "unknown"}`);
           }
@@ -127,8 +164,36 @@ function _handleWsMessage(msg) {
       );
     } else if (policy?.decision === "ESCALATE") {
       _appendStatus("step", `⚠️ Escalated: ${policy.reason ?? "requires approval"}`);
+      
+      // For escalated actions, still report back so the backend can advance
+      const escalationResult = {
+        type: "action_result",
+        action_id: action.action_id,
+        session_id: sessionId,
+        ok: true,  // escalation is not a failure — it's a pause
+        error: null,
+        page_state: null,
+        escalated: true,
+      };
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(escalationResult));
+      }
     } else if (policy?.decision === "DENY") {
       _appendStatus("error", `🚫 Blocked: ${policy.reason ?? "policy denied"}`);
+      
+      // Report the denial back so the backend stops waiting
+      const denyResult = {
+        type: "action_result",
+        action_id: action.action_id,
+        session_id: sessionId,
+        ok: false,
+        error: policy.reason || "policy denied",
+        page_state: null,
+        denied: true,
+      };
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(denyResult));
+      }
     }
   }
 }
@@ -150,6 +215,21 @@ function _refreshTabContext() {
       tabUrlLabel.textContent = ctx.url || "Unknown tab";
     }
     tabUrlLabel.title = ctx.url;
+  });
+}
+
+// ── Fresh tab context for action verification ────────────────────────────────
+// Called after each executed action to re-read the page state and send it
+// back to the backend for verification before the next action.
+function _getFreshTabContext() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "GET_FULL_TAB_CONTEXT" }, (ctx) => {
+      if (chrome.runtime.lastError || !ctx || ctx.error) {
+        resolve(null);
+        return;
+      }
+      resolve(ctx);
+    });
   });
 }
 

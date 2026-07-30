@@ -583,6 +583,12 @@ body {
   }
 }
 
+/* ── Pulse animation for loading states ────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Step Timeline */
 
 /* Card wrapper that sits inline in the chat thread */

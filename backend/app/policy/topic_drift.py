@@ -43,7 +43,7 @@ class TopicDriftDetector:
 
         try:
             response = self.client.chat.completions.create(
-                model="meta/llama-3.1-70b-instruct",
+                model="meta/llama-3.1-8b-instruct",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 response_format={"type": "json_object"}

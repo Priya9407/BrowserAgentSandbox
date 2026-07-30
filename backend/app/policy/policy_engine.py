@@ -149,6 +149,14 @@ class PolicyEngine:
         if topic_drift:
             return PolicyDecision.DENY if category in _critical else PolicyDecision.ESCALATE
 
+        # UNVERIFIED provenance: the LLM fabricated or hallucinated the citation.
+        # Treat this as at least as dangerous as hidden content — the model
+        # cannot be trusted to justify its own actions.
+        if origin == Origin.UNVERIFIED:
+            _hard_deny = {RiskCategory.CREDENTIAL, RiskCategory.PAYMENT,
+                          RiskCategory.DELETE, RiskCategory.SEND}
+            return PolicyDecision.DENY if category in _hard_deny else PolicyDecision.ESCALATE
+
         # Cited text traces back to hidden DOM content.
         if origin == Origin.HIDDEN_PAGE_CONTENT:
             _hard_deny = {RiskCategory.CREDENTIAL, RiskCategory.PAYMENT, RiskCategory.DELETE}
@@ -196,6 +204,16 @@ class PolicyEngine:
                 "to the user's original task. Possible prompt injection via visible "
                 "page content."
             )
+
+        if origin == Origin.UNVERIFIED:
+            base = (
+                "The agent's cited reasoning cannot be verified against any known "
+                "source (user task, visible page text, or hidden page text). "
+                "The LLM may have fabricated this citation. "
+            )
+            if decision == PolicyDecision.DENY:
+                return base + "Action denied — unverifiable citation with high-risk category."
+            return base + "Human review required before this unverifiable action executes."
 
         if origin == Origin.HIDDEN_PAGE_CONTENT:
             return (

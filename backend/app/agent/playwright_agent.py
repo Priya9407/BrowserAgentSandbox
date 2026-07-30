@@ -343,7 +343,17 @@ def run_browser_agent(
             hidden_page_text: str = " ".join(
                 el.get("text", "") or "" for el in hidden.get("elements", [])
             )
-            dom = page.content()
+            # Wrap page.content() in try/except — if the page/closing or has crashed,
+            # fall back to an empty string rather than crashing the entire agent.
+            try:
+                dom = page.content()
+            except Exception as page_err:
+                print(f"[playwright_agent] page.content() failed in main loop: {page_err}")
+                dom = ""
+                # If the page is gone, we can't continue — break out of the loop
+                task_outcome = "error"
+                task_outcome_reason = f"Browser page was closed unexpectedly: {page_err}"
+                break
 
             # ── CAPTCHA / bot-check detection ─────────────────────────────
             # See detect_captcha() docstring — we never attempt to solve the
@@ -410,20 +420,29 @@ def run_browser_agent(
             # ── Ask signal ────────────────────────────────────────────────
             if action.action_type == "ask":
                 from app.agent.ask_state import pending_asks
-                pending_asks[trace_seg.trace_id] = {"status": "pending", "question": action.value, "answer": None}
+                # Support optional options for user-choice prompts
+                action_options = getattr(action, "options", None) or []
+                pending_asks[trace_seg.trace_id] = {
+                    "status": "pending", "question": action.value, "answer": None,
+                    "options": action_options,
+                }
+                
+                evt = {
+                    "step_number": step_idx + 1,
+                    "total_steps": total,
+                    "goal": browser_agent.current_step_goal,
+                    "outcome": "paused",
+                    "retry": retry_count,
+                    "session_id": trace_seg.trace_id,
+                    "ask_question": action.value,
+                }
+                if action_options:
+                    evt["ask_options"] = action_options
                 
                 _emit(
                     "step",
-                    f"❓ Agent asks: {action.value}",
-                    {
-                        "step_number": step_idx + 1,
-                        "total_steps": total,
-                        "goal": browser_agent.current_step_goal,
-                        "outcome": "paused",
-                        "retry": retry_count,
-                        "session_id": trace_seg.trace_id,
-                        "ask_question": action.value,
-                    },
+                    f"❓ Agent asks: {action.value}" + (" (choose an option)" if action_options else ""),
+                    evt,
                 )
                 
                 waited_ms = 0
@@ -635,6 +654,22 @@ def run_browser_agent(
 
 
 # ---------------------------------------------------------------------------
+# Safe page.content() accessor — never crashes
+# ---------------------------------------------------------------------------
+def _safe_page_content(page: Page, context: str = "") -> str:
+    """
+    Wrapper around page.content() that never raises.
+    If the page/context/browser has been closed, returns an empty string
+    and logs a warning instead of crashing the agent.
+    """
+    try:
+        return page.content()
+    except Exception as exc:
+        print(f"[playwright_agent] page.content() failed ({context}): {exc}")
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Recovery loop (Task B)
 # ---------------------------------------------------------------------------
 
@@ -707,7 +742,14 @@ def _execute_with_recovery(
         )
 
         failed_step = {"goal": goal}
-        current_dom = page.content()
+        # Wrap page.content() in try/except — if the page was closed by the failed
+        # navigation/click, use the original (pre-execution) DOM as a fallback
+        # so the re-plan still has context rather than crashing the entire agent.
+        try:
+            current_dom = page.content()
+        except Exception as page_err:
+            print(f"[playwright_agent] page.content() failed during recovery: {page_err}")
+            current_dom = dom or ""   # fall back to the pre-execution DOM snapshot
         new_plan = replan_after_failure(
             original_task=browser_agent.user_task,
             completed_steps=completed_steps,
@@ -770,7 +812,8 @@ def _handle_escalation(
         emit("step", f"Auto-approved escalated action: {action.action_type}")
         _execute_with_recovery(
             page=page, action=action, browser_agent=browser_agent,
-            completed_steps=completed_steps, dom=page.content(),
+            completed_steps=completed_steps,
+            dom=_safe_page_content(page, "escalation_auto_approve"),
             emit=emit, total=total,
         )
         browser_agent.advance_step()
@@ -790,7 +833,8 @@ def _handle_escalation(
             print(f"Human APPROVED action {action.action_id}")
             _execute_with_recovery(
                 page=page, action=action, browser_agent=browser_agent,
-                completed_steps=completed_steps, dom=page.content(),
+                completed_steps=completed_steps,
+                dom=_safe_page_content(page, "escalation_approved"),
                 emit=emit, total=total,
             )
             browser_agent.advance_step()

@@ -17,3 +17,4 @@ class AgentAction(BaseModel):
     cited_source_text: str | None = ""
     cited_source_location: str | None = ""
     timestamp: str
+    options: list[str] | None = None   # Present choices for the user to pick from (action_type="ask" only)

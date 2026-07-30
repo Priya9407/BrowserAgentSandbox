@@ -108,11 +108,12 @@ class SourceClassifier:
             return Origin.VISIBLE_PAGE_CONTENT
 
         # ------------------------------------------------------------------
-        # 4. Fallback — the agent cited something not present on the page.
-        #    Most likely it paraphrased the user task.  Treat as USER_TASK
-        #    (safe default — the policy engine's risk layer still applies).
+        # 4. Fallback — the agent cited something not present on the page,
+        #    not in the user's original task, and not in any page text.
+        #    This means the LLM fabricated or hallucinated the citation.
+        #    Treat as UNVERIFIED — never auto-trusted.
         # ------------------------------------------------------------------
-        return Origin.USER_TASK
+        return Origin.UNVERIFIED
 
     # ------------------------------------------------------------------
     # Helpers

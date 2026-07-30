@@ -666,7 +666,29 @@ async def extension_ws_endpoint(ws: WebSocket):
 
     try:
         while True:
-            await ws.receive_text()   # keep-alive; extension sends pings
+            raw = await ws.receive_text()
+            # Try to parse incoming messages (action_results from side panel)
+            try:
+                msg = json.loads(raw)
+                if msg.get("type") == "action_result":
+                    action_id = msg.get("action_id")
+                    from app.agent.verification_state import pending_verifications
+                    if action_id and action_id in pending_verifications:
+                        pending_verifications[action_id]["status"] = "completed" if msg.get("ok") else "failed"
+                        pending_verifications[action_id]["result"] = msg
+                        logging.info(
+                            "Extension action result: %s -> %s (ok=%s)",
+                            action_id, pending_verifications[action_id]["status"], msg.get("ok"),
+                        )
+                    else:
+                        logging.warning("Unknown action_id in action_result: %s", action_id)
+                elif msg.get("type") == "pong":
+                    pass  # keep-alive response, nothing to do
+                else:
+                    logging.debug("Extension WS received: %s", raw[:200])
+            except json.JSONDecodeError:
+                # Non-JSON message (legacy keep-alive ping)
+                pass
     except WebSocketDisconnect:
         logging.info("Extension WS disconnected.")
     except Exception as exc:
@@ -730,7 +752,43 @@ async def extension_chat(body: ExtensionChatRequest, request: Request):
     from app.policy.policy_engine import PolicyEngine
     from app.policy.gate import enforce_action_contract, GateRejected
     from app.policy.decision import PolicyDecision
-    from app.schemas.action_schema import AgentAction, SemanticTarget
+    from app.schemas.action_schema import AgentAction
+
+
+# ---------------------------------------------------------------------------
+# Helper: format accessibility tree for LLM consumption
+# ---------------------------------------------------------------------------
+def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
+    """
+    Recursively formats the accessibility tree as a compact, labelled
+    text listing suitable for the LLM prompt.  Filters out non-interactive
+    containers that have no meaningful role or name.
+    """
+    if not tree:
+        return ""
+    pad = "  " * indent
+    parts = []
+
+    role = tree.get("role", "?")
+    name = tree.get("name", "")
+    tag = tree.get("tag", "?")
+    state = tree.get("state", {})
+
+    line = f"{pad}<{tag}> role={role}"
+    if name:
+        line += f' name="{name[:80]}"'
+    if state:
+        state_str = " ".join(f"{k}={v}" for k, v in state.items() if not k.startswith("_"))
+        if state_str:
+            line += f" [{state_str}]"
+    parts.append(line)
+
+    for child in tree.get("children", []):
+        child_str = _format_a11y_tree(child, indent + 1)
+        if child_str:
+            parts.append(child_str)
+
+    return "\n".join(parts), SemanticTarget
     from datetime import datetime
     import uuid as _uuid
 
@@ -766,13 +824,41 @@ async def extension_chat(body: ExtensionChatRequest, request: Request):
             await _status("step", f"Plan ({len(plan.steps)} steps): {step_summary}")
 
             # ── Step 2: Per-step LLM grounding + policy check ──────────
+            # Each step: ground → gate → policy → emit ONE action →
+            # wait for verified execution → refresh page state → repeat.
             policy_engine = PolicyEngine()
             history: list[dict] = []
+            from app.agent.verification_state import pending_verifications
+
+            # Current page state — starts from the initial snapshot,
+            # refreshed after each verified action execution.
+            current_visible_text = body.visible_text
+            current_accessible_tree = None
+            current_tab_url = body.tab_url
+            current_tab_title = body.tab_title
+            current_tab_id = None  # populated from first action_result
 
             for step in plan.steps:
                 await _status("step", f"Step {step.step_number}: {step.goal}")
 
-                # Build task context for this step (mirrors agent._build_task_context)
+                # ── Build observation for the LLM ──────────────────────────
+                # Prefer the structured accessibility tree when available;
+                # fall back to visible text. The tree is more secure because
+                # it only exposes interactive/structural elements, not raw DOM.
+                if current_accessible_tree:
+                    # Serialize the tree as a compact labelled listing
+                    tree_str = _format_a11y_tree(current_accessible_tree)
+                    observation = (
+                        f"ACCESSIBILITY TREE (filtered, only interactive elements):\n"
+                        f"{tree_str[:6000]}"
+                    )
+                else:
+                    observation = (
+                        f"PAGE TEXT:\n{current_visible_text[:6000]}"
+                    )
+
+                # ── Action grounding with CURRENT page state ──────────────
+                # Uses the latest observed page state, not the initial snapshot.
                 step_context = (
                     f"{body.goal}\n\n"
                     f"You are following this plan:\n"
@@ -782,13 +868,13 @@ async def extension_chat(body: ExtensionChatRequest, request: Request):
                         for s in plan.steps
                     )
                     + f"\n\nFocus on the CURRENT STEP. "
-                    f"Use the page text below as the DOM.\n\n"
-                    f"PAGE TEXT:\n{body.visible_text[:6000]}"
+                    f"Use the page observation below.\n\n"
+                    f"{observation}"
                 )
 
                 raw = get_next_action(
                     user_task=step_context,
-                    dom=body.visible_text[:8000] or "<empty>",
+                    dom=current_visible_text[:8000] or "<empty>",
                     history=history,
                 )
 
@@ -811,30 +897,25 @@ async def extension_chat(body: ExtensionChatRequest, request: Request):
                     await _status("step", f"✓ Step {step.step_number} already satisfied.")
                     continue
 
-                # Gate check
+                # ── Gate check ───────────────────────────────────────────
                 try:
                     enforce_action_contract(action)
                 except GateRejected as e:
                     await _status("error", f"Gate rejected action at step {step.step_number}: {e}")
                     return
 
-                # Policy check — use original goal as trust anchor
+                # ── Policy check ─────────────────────────────────────────
+                # uses the original goal as trust anchor, but the LATEST
+                # page state for source classification.
                 policy_result = policy_engine.evaluate(
                     action,
-                    hidden_content_detected=False,   # no heuristic scan in extension mode
+                    hidden_content_detected=False,   # no heuristic scan in extension mode yet
                     user_task=body.goal,
-                    visible_page_text=body.visible_text,
+                    visible_page_text=current_visible_text,
                     hidden_page_text="",
                 )
 
-                # Emit the action event — side panel will execute or escalate
-                await _ext_broadcast({
-                    "type":       "action",
-                    "session_id": session_id,
-                    "action":     action.model_dump(mode="json"),
-                    "policy":     policy_result.model_dump(mode="json"),
-                })
-
+                # ── Handle DENY ──────────────────────────────────────────
                 if policy_result.decision == PolicyDecision.DENY:
                     await _status(
                         "error",
@@ -842,13 +923,76 @@ async def extension_chat(body: ExtensionChatRequest, request: Request):
                     )
                     return
 
+                # ── Emit ONE action — then WAIT for verification ─────────
+                # Register pending verification BEFORE broadcasting so the
+                # WebSocket handler can find it when the result arrives.
+                pending_verifications[action.action_id] = {
+                    "status": "pending",
+                    "result": None,
+                }
+
+                action_payload = action.model_dump(mode="json")
+                # Bind the action to the current session and tab context
+                action_payload["_binding"] = {
+                    "session_id": session_id,
+                    "tab_url": current_tab_url,
+                    "tab_title": current_tab_title,
+                }
+
                 if policy_result.decision == PolicyDecision.ESCALATE:
                     await _status(
                         "step",
                         f"⚠️ Step {step.step_number} escalated — "
-                        f"awaiting human approval in the side panel.",
+                        f"awaiting human approval in the side panel. "
+                        f"Reason: {policy_result.reason}",
                     )
-                    # The side panel shows Approve/Deny; we don't block here.
+
+                await _ext_broadcast({
+                    "type":       "action",
+                    "session_id": session_id,
+                    "action":     action_payload,
+                    "policy":     policy_result.model_dump(mode="json"),
+                })
+
+                # ── Poll for verification result ─────────────────────────
+                # Blocks until the side panel reports the execution result
+                # (success with fresh page state) or times out.
+                waited_ms = 0
+                timeout_ms = 60_000  # 60 seconds per action
+                verified_ok = False
+
+                while waited_ms < timeout_ms:
+                    vstate = pending_verifications.get(action.action_id)
+                    if vstate and vstate["status"] != "pending":
+                        verified_ok = (vstate["status"] == "completed")
+                        result_data = vstate.get("result", {})
+                        # Refresh page state from the result
+                        page_state = result_data.get("page_state", {})
+                        if page_state.get("visible_text"):
+                            current_visible_text = page_state["visible_text"]
+                        if page_state.get("accessibility_tree"):
+                            current_accessible_tree = page_state["accessibility_tree"]
+                        if page_state.get("url"):
+                            current_tab_url = page_state["url"]
+                        if page_state.get("tabId"):
+                            current_tab_id = page_state["tabId"]
+                        break
+                    await asyncio.sleep(0.5)  # poll every 500ms
+                    waited_ms += 500
+
+                # Clean up the pending verification
+                vstate = pending_verifications.pop(action.action_id, None)
+
+                if not verified_ok:
+                    fail_reason = (
+                        ((vstate.get("result") or {}).get("error") or "Action timed out or failed")
+                        if vstate else "Action timed out — no response from side panel."
+                    )
+                    await _status(
+                        "error",
+                        f"Action failed at step {step.step_number}: {fail_reason}",
+                    )
+                    return
 
                 history.append(action.model_dump())
 

@@ -28,11 +28,17 @@ class Origin(str, Enum):
                          hidden from the user (display:none,
                          off-screen, zero-opacity, etc.).
                          Never auto-trusted.
+    unverified          — the cited text does not match any
+                          known source (user task, visible page
+                          text, or hidden page text). The LLM
+                          fabricated or paraphrased it.
+                          Never auto-trusted.
     """
 
     USER_TASK = "user_task"
     VISIBLE_PAGE_CONTENT = "visible_page_content"
     HIDDEN_PAGE_CONTENT = "hidden_page_content"
+    UNVERIFIED = "unverified"
 
 
 class PolicyResult(BaseModel):
@@ -56,7 +62,9 @@ class PolicyResult(BaseModel):
     hidden_content_detected: bool
 
     # Where the agent's reasoning originated
-    origin: Origin = Origin.USER_TASK
+    # Default changed from USER_TASK to UNVERIFIED so that
+    # unverifiable citations are never auto-trusted.
+    origin: Origin = Origin.UNVERIFIED
 
     # Whether the action semantically drifts from the user task
     topic_drift_detected: bool = False

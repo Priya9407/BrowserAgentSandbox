@@ -145,6 +145,7 @@ class BrowserAgent:
             cited_source_text=result.get("cited_source_text", ""),
             cited_source_location=result.get("cited_source_location", ""),
             timestamp=datetime.now().isoformat(),
+            options=result.get("options"),  # optional list of user-selectable choices
         )
 
         self.history.append(action.model_dump())

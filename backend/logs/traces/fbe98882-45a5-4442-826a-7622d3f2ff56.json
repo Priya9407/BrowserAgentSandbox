@@ -1,0 +1,168 @@
+[
+  {
+    "trace_id": "fbe98882-45a5-4442-826a-7622d3f2ff56",
+    "id": "60ab51833b3a4839",
+    "name": "demo_task",
+    "start_time": 1785399037092.3267,
+    "end_time": 1785399210168.023,
+    "duration_ms": 173075.7,
+    "metadata": {
+      "user_task": "Buy the laptop listed on the shopping page",
+      "screenshot_url": "file://C:\\Nexiva\\Frontier\\version1\\backend\\logs\\screenshots\\fbe98882-45a5-4442-826a-7622d3f2ff56.png",
+      "success_count": 4,
+      "fail_count": 0,
+      "elapsed_seconds": 173.08,
+      "demo_task_key": "buy_laptop"
+    },
+    "subsegments": [
+      {
+        "id": "30650f1b7b02434d",
+        "parent_id": "60ab51833b3a4839",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399040677.838,
+        "end_time": 1785399040677.838,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "4d9093182a77424e",
+        "parent_id": "60ab51833b3a4839",
+        "name": "policy.evaluate",
+        "start_time": 1785399040677.838,
+        "end_time": 1785399044996.3884,
+        "duration_ms": 4318.55,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "9f7ae445e8604b2a",
+        "parent_id": "60ab51833b3a4839",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399108998.5054,
+        "end_time": 1785399109058.673,
+        "duration_ms": 60.17,
+        "metadata": {
+          "step": 1,
+          "action_type": "navigate"
+        },
+        "error": null
+      },
+      {
+        "id": "014c338473944ba0",
+        "parent_id": "60ab51833b3a4839",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399109643.7588,
+        "end_time": 1785399109644.745,
+        "duration_ms": 0.99,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "cda54f7a18b043a0",
+        "parent_id": "60ab51833b3a4839",
+        "name": "policy.evaluate",
+        "start_time": 1785399109644.745,
+        "end_time": 1785399111284.8508,
+        "duration_ms": 1640.11,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "a601f72751504c36",
+        "parent_id": "60ab51833b3a4839",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399166158.158,
+        "end_time": 1785399166329.7827,
+        "duration_ms": 171.62,
+        "metadata": {
+          "step": 2,
+          "action_type": "click"
+        },
+        "error": null
+      },
+      {
+        "id": "4fbf7a846b844c24",
+        "parent_id": "60ab51833b3a4839",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399166912.3215,
+        "end_time": 1785399166912.3215,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "8335cedb0bf74457",
+        "parent_id": "60ab51833b3a4839",
+        "name": "policy.evaluate",
+        "start_time": 1785399166912.3215,
+        "end_time": 1785399168697.2686,
+        "duration_ms": 1784.95,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "065a09757c9041ea",
+        "parent_id": "60ab51833b3a4839",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399191048.748,
+        "end_time": 1785399191060.996,
+        "duration_ms": 12.25,
+        "metadata": {
+          "step": 3,
+          "action_type": "scroll"
+        },
+        "error": null
+      },
+      {
+        "id": "67529bc82d0b4166",
+        "parent_id": "60ab51833b3a4839",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785399191637.1309,
+        "end_time": 1785399191637.1309,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 4
+        },
+        "error": null
+      },
+      {
+        "id": "acf887eb0a5e4e27",
+        "parent_id": "60ab51833b3a4839",
+        "name": "policy.evaluate",
+        "start_time": 1785399191637.1309,
+        "end_time": 1785399193479.848,
+        "duration_ms": 1842.72,
+        "metadata": {
+          "step": 4
+        },
+        "error": null
+      },
+      {
+        "id": "cccc1ba05eee4608",
+        "parent_id": "60ab51833b3a4839",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785399207708.248,
+        "end_time": 1785399207708.248,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 4,
+          "action_type": "done"
+        },
+        "error": null
+      }
+    ]
+  }
+]

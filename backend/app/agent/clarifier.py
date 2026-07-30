@@ -36,9 +36,19 @@ USER TASK: {user_task}
 Identify ONLY the critical missing details that:
 1. The agent CANNOT reasonably guess or search for itself
 2. Without which the agent cannot complete the task at all
-3. Are specific to this user (personal preferences, account details, etc.)
+3. Are specific to this user (personal preferences, product choices, etc.)
 
-DO NOT ask about things the agent can figure out itself (which website, generic steps, etc.)
+🚫 DO NOT ask for:
+  - Passwords, login credentials, or account details — the agent will ask for those on the login page if needed
+  - Which website to visit — the agent can search or you can specify it in your task
+
+✅ DO ask for:
+  - Specific product preferences (color, size, model)
+  - Delivery/pickup preferences
+  - Travel dates, locations
+  - Budget limits
+
+DO NOT ask about things the agent can figure out itself (generic steps, search queries, etc.)
 If the task is already self-contained, return an empty list.
 
 Return ONLY this JSON:
@@ -49,11 +59,12 @@ Examples:
 - "Search for Sony headphones price" -> {{"questions": []}}
 - "Order pizza from Swiggy" -> {{"questions": ["Which restaurant and pizza?", "What is your delivery address?"]}}
 - "Book a flight to Delhi" -> {{"questions": ["Where are you flying from?", "What is your travel date and class?"]}}
+- "Login to my Amazon account" -> {{"questions": []}}  (agent will ask for credentials on the page)
 """
 
     try:
         response = client.chat.completions.create(
-            model="meta/llama-3.1-70b-instruct",
+            model="meta/llama-3.1-8b-instruct",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             response_format={"type": "json_object"},

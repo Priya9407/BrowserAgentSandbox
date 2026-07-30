@@ -41,7 +41,19 @@ class RiskClassifier:
         combined = f"{target} {text} {label}"
 
         # --------------------------
-        # PAYMENT
+        # CONSEQUENCE-BASED PRE-CHECK
+        # If the action_type itself implies a sensitive consequence,
+        # classify based on that before looking at keywords.
+        # This catches cases where a "Continue" button actually
+        # triggers payment, credential submission, or data send.
+        # --------------------------
+        if action.action_type in ("fill", "type"):
+            # Filling a form field is always at least FORM_FILL;
+            # the keyword checks below may escalate it further.
+            pass
+
+        # --------------------------
+        # PAYMENT  (highest priority — check first)
         # --------------------------
 
         payment_keywords = [
@@ -63,7 +75,7 @@ class RiskClassifier:
             return RiskCategory.PAYMENT
 
         # --------------------------
-        # LOGIN / PASSWORD
+        # CREDENTIAL  (login, password, token)
         # --------------------------
 
         credential_keywords = [
@@ -83,21 +95,9 @@ class RiskClassifier:
             return RiskCategory.CREDENTIAL
 
         # --------------------------
-        # DOWNLOAD
-        # --------------------------
-
-        download_keywords = ["download", ".exe", ".zip", ".pdf", ".apk", "installer"]
-
-        if any(word in combined for word in download_keywords):
-            return RiskCategory.DOWNLOAD
-
-        # Navigation-like keywords — check BEFORE send so 'Next', 'Continue' aren't caught
-        nav_preflight = ["next", "previous", "continue", "back", "home", "menu"]
-        if any(word in combined for word in nav_preflight):
-            return RiskCategory.NAVIGATION
-
-        # --------------------------
-        # SEND
+        # SEND  (send, email, message, share, publish)
+        # Check BEFORE download so "send file" patterns are caught
+        # as SEND rather than DOWNLOAD.
         # --------------------------
 
         send_keywords = [
@@ -110,6 +110,15 @@ class RiskClassifier:
 
         if any(word in combined for word in send_keywords):
             return RiskCategory.SEND
+
+        # --------------------------
+        # DOWNLOAD
+        # --------------------------
+
+        download_keywords = ["download", ".exe", ".zip", ".pdf", ".apk", "installer"]
+
+        if any(word in combined for word in download_keywords):
+            return RiskCategory.DOWNLOAD
 
         # --------------------------
         # FILE UPLOAD
@@ -130,7 +139,7 @@ class RiskClassifier:
             return RiskCategory.DELETE
 
         # --------------------------
-        # FORM FILL
+        # FORM FILL  (input, search, name, address, phone)
         # --------------------------
 
         form_keywords = [
@@ -147,20 +156,34 @@ class RiskClassifier:
             return RiskCategory.FORM_FILL
 
         # --------------------------
-        # NAVIGATION
+        # NAVIGATION  (lowest priority — only if no sensitive match)
+        # Moved to END so that "Continue", "Next", "Back" etc. are
+        # only classified as NAVIGATION when no payment/credential/
+        # send/download keyword was present.
         # --------------------------
 
         navigation_keywords = [
             "next",
             "previous",
-            "home",
-            "menu",
             "continue",
             "back",
+            "home",
+            "menu",
             "link",
         ]
 
         if any(word in combined for word in navigation_keywords):
+            return RiskCategory.NAVIGATION
+
+        # --------------------------
+        # FALLBACK: check action_type for consequence-based inference
+        # If the action is a fill/type but no keywords matched,
+        # it's still a form interaction — classify as FORM_FILL.
+        # --------------------------
+        if action.action_type in ("fill", "type"):
+            return RiskCategory.FORM_FILL
+
+        if action.action_type == "navigate":
             return RiskCategory.NAVIGATION
 
         return RiskCategory.UNKNOWN

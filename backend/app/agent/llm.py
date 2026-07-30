@@ -130,6 +130,13 @@ IMPORTANT RULES:
 - cited_source_text MUST be the exact visible text that justified this action.
 - cited_source_location MUST be a CSS selector pointing to that text's element.
 
+🎯 OPTIONS (user choice / multi-site results):
+When you find multiple results from different sources (e.g. prices from different websites),
+use action_type="ask" with an `options` array containing each choice as a string.
+The user will click one, and you'll receive their choice to proceed.
+Example: {{"action_type": "ask", "value": "Which result should I open?",
+  "options": ["Amazon — $49.99", "Best Buy — $54.99", "Walmart — $47.99"]}}
+
 QUIZ / MULTI-STEP FORM RULES (apply these strictly):
 - After clicking a quiz option/answer, the other options become disabled. DO NOT click another option.
   Your ONLY next action after selecting an answer is to click the "Next", "Continue", or "Submit" button.
@@ -145,12 +152,13 @@ Return a JSON object with EXACTLY these keys:
   "value": "<string or null>",
   "reasoning": "...",
   "cited_source_text": "...",
-  "cited_source_location": "..."
+  "cited_source_location": "...",
+  "options": ["<option 1>", "<option 2>", "..."] or null
 }}
 """
 
     response = client.chat.completions.create(
-        model="meta/llama-3.1-70b-instruct",
+        model="meta/llama-3.1-8b-instruct",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
         response_format={"type": "json_object"},
@@ -220,7 +228,7 @@ def ask_vision_for_element(page, description: str) -> str | None:
         )
 
         response = client.chat.completions.create(
-            # Bug fix (Milestone 3 item A): meta/llama-3.1-70b-instruct is
+            # Bug fix (Milestone 3 item A): meta/llama-3.1-8b-instruct is
             # text-only. Vision fallback needs a real VLM — this is the
             # NVIDIA-hosted vision-capable model.
             model="meta/llama-3.2-11b-vision-instruct",
@@ -307,7 +315,7 @@ Return a JSON object with EXACTLY this shape:
 
     try:
         response = client.chat.completions.create(
-            model="meta/llama-3.1-70b-instruct",
+            model="meta/llama-3.1-8b-instruct",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             response_format={"type": "json_object"},
