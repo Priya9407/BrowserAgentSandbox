@@ -35,6 +35,7 @@ const tabUrlLabel    = document.getElementById("tab-url-label");
 const refreshCtxBtn  = document.getElementById("refresh-context-btn");
 const captchaBanner  = document.getElementById("captcha-banner");
 const captchaResumeBtn = document.getElementById("captcha-resume-btn");
+const panelEl        = document.querySelector(".panel");
 
 // ── State ────────────────────────────────────────────────────────────────────
 let ws              = null;
@@ -246,6 +247,9 @@ function _setRunning(value) {
   running = value;
   goalInput.disabled = value;
   sendBtn.disabled   = value || goalInput.value.trim() === "";
+  sendBtn.textContent = value ? "Running…" : "Run Agent";
+  goalInput.placeholder = value ? "Agent is working..." : "Describe what you want the agent to do...";
+  panelEl?.classList.toggle("is-running", value);
 
   // Typing indicator
   const existingTyping = document.getElementById("__typing-indicator");

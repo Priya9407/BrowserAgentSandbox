@@ -222,7 +222,7 @@ if (typeof window.__frontierInjected === "undefined") {
       banner.id = ID;
       banner.innerHTML = `
         <span style="font-size:14px;">🤖</span>
-        <span style="flex:1;font-weight:700;">Frontier Agent is active on this tab</span>
+        <span style="flex:1;font-weight:700;">Aegis Vigilis is active on this tab</span>
         <button id="__frontier-dismiss" style="
           background:none;border:1px solid rgba(255,255,255,0.5);
           border-radius:6px;color:#fff;font-size:11px;padding:3px 10px;

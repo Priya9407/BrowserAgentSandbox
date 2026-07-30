@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Frontier Agent",
+  "name": "Aegis Vigilis",
   "version": "0.1.0",
-  "description": "Run the Frontier browser agent on any tab via a side panel chat.",
+  "description": "Run Aegis Vigilis on any tab via a side panel chat.",
 
   "permissions": [
     "activeTab",
@@ -21,7 +21,7 @@
   },
 
   "action": {
-    "default_title": "Open Frontier Agent",
+    "default_title": "Open Aegis Vigilis",
     "default_icon": {
       "16":  "icons/icon16.png",
       "48":  "icons/icon48.png",
