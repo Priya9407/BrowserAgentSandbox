@@ -130,6 +130,13 @@ IMPORTANT RULES:
 - cited_source_text MUST be the exact visible text that justified this action.
 - cited_source_location MUST be a CSS selector pointing to that text's element.
 
+QUIZ / MULTI-STEP FORM RULES (apply these strictly):
+- After clicking a quiz option/answer, the other options become disabled. DO NOT click another option.
+  Your ONLY next action after selecting an answer is to click the "Next", "Continue", or "Submit" button.
+- NEVER try to click a `disabled` element. If all options appear disabled, it means one is already selected — find and click the Next/Continue/Submit button instead.
+- DO NOT re-click an already-selected option. If an option is marked as selected/checked/active, skip straight to clicking Next.
+- On the LAST question, after selecting your answer, click whatever final submit/finish button is available.
+
 Return a JSON object with EXACTLY these keys:
 {{
   "action_type": "click|fill|type|navigate|scroll|ask|done",
