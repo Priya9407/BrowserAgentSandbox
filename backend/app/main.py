@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.agent.playwright_agent import run_browser_agent_async
 from app.agent.clarifier import get_clarification_questions, enrich_task_with_answers
+from app.agent.demo_runner import run_demo_agent_async
+from app.agent.demo_scripts import DEMO_SCRIPTS
 
 logging.basicConfig(level=logging.INFO)
 
@@ -272,6 +274,129 @@ def get_chat_session(session_id: str):
     if session_id not in chat_sessions:
         return {"error": "session not found"}
     return chat_sessions[session_id]
+
+
+# ---------------------------------------------------------------------------
+# /chat-demo  — scripted demo mode for the 4 chat chip buttons
+#
+# This endpoint is used ONLY when a demo chip is clicked in ChatPanel.jsx.
+# It bypasses generate_plan() and get_next_action() entirely and runs a
+# pre-scripted sequence of actions through the real policy/gate/execute
+# pipeline.  The /chat endpoint (free-text goals) is completely unchanged.
+#
+# Request body:
+#   demo_task_key : str   — one of: product_price | check_flight |
+#                           buy_laptop | restaurant_hours
+#   headless      : bool  — default False so the browser is visible
+#
+# WebSocket events emitted (same shape as /chat):
+#   { type: "chat_status", session_id, status: "step"|"done"|"error", text, step_event? }
+#   { type: "action",      session_id, action: AgentAction, policy: PolicyResult }
+# ---------------------------------------------------------------------------
+
+class DemoChatRequest(BaseModel):
+    demo_task_key: str
+    headless: bool = False
+
+
+@app.post("/chat-demo")
+async def chat_demo(body: DemoChatRequest):
+    if body.demo_task_key not in DEMO_SCRIPTS:
+        return {
+            "error": f"Unknown demo_task_key '{body.demo_task_key}'. "
+                     f"Valid: {list(DEMO_SCRIPTS)}"
+        }
+
+    session_id = str(uuid.uuid4())
+    script     = DEMO_SCRIPTS[body.demo_task_key]
+    goal       = script["goal"]
+
+    chat_sessions[session_id] = [{"role": "user", "text": goal}]
+
+    # Broadcast an immediate "planning" event so the UI shows a spinner
+    await _broadcast({
+        "type":       "chat_status",
+        "session_id": session_id,
+        "status":     "planning",
+        "text":       f'[Demo] {goal}',
+    })
+
+    async def status_callback(status: str, text: str, step_event: dict | None = None):
+        msg = {"role": "agent", "text": text}
+        chat_sessions[session_id].append(msg)
+        payload = {
+            "type":       "chat_status",
+            "session_id": session_id,
+            "status":     status,
+            "text":       text,
+        }
+        if step_event:
+            payload["step_event"] = step_event
+        await _broadcast(payload)
+
+    asyncio.create_task(
+        _run_demo_chat_agent(
+            session_id=session_id,
+            demo_task_key=body.demo_task_key,
+            goal=goal,
+            headless=body.headless,
+            status_callback=status_callback,
+        )
+    )
+
+    return {"session_id": session_id, "status": "started"}
+
+
+async def _run_demo_chat_agent(
+    session_id: str,
+    demo_task_key: str,
+    goal: str,
+    headless: bool,
+    status_callback,
+):
+    """
+    Wraps run_demo_agent_async with session tagging, action-queue forwarding,
+    and a final done/error status broadcast — same pattern as _run_chat_agent.
+    """
+    try:
+        tagged_queue: asyncio.Queue = asyncio.Queue()
+
+        async def _forward_tagged():
+            while True:
+                item = await tagged_queue.get()
+                if item is None:
+                    break
+                # Ensure every action event carries session_id so ActionFeed
+                # and ChatPanel can filter by session.
+                item.setdefault("type", "action")
+                item["session_id"] = session_id
+                await action_queue.put(item)
+
+        forwarder = asyncio.create_task(_forward_tagged())
+
+        result = await run_demo_agent_async(
+            queue=tagged_queue,
+            demo_task_key=demo_task_key,
+            headless=headless,
+            step_callback=status_callback,
+            trace_id=session_id,
+        )
+
+        await tagged_queue.put(None)
+        await forwarder
+
+        if result and result.get("status") == "error":
+            reason = result.get("reason") or "task did not complete"
+            await status_callback(
+                "error",
+                f'Demo task ended: "{goal}" — {reason}',
+            )
+        else:
+            await status_callback("done", f'Demo complete: "{goal}"')
+
+    except Exception as exc:
+        logging.exception("Demo chat agent error for session %s", session_id)
+        await status_callback("error", f"Demo agent error: {exc}")
 
 
 # ---------------------------------------------------------------------------

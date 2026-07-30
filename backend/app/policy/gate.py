@@ -14,15 +14,15 @@ class GateRejected(Exception):
     pass
 
 
-# Actions where we strictly require a citation to prevent prompt injection
-_CITATION_REQUIRED = {"fill", "type"}
-
+# Any direct browser action that interacts with content must include a citation.
+# Only terminal/non-interactive actions like `done`, `ask`, `navigate`, and
+# `scroll` may omit citation fields.
 
 def enforce_action_contract(action: AgentAction) -> None:
     if not action.reasoning or not action.reasoning.strip():
         raise GateRejected(f"Action {action.action_id} missing reasoning")
 
-    if action.action_type in _CITATION_REQUIRED:
+    if action.action_type not in ("done", "ask", "navigate", "scroll"):
         if not action.cited_source_text or not action.cited_source_text.strip():
             raise GateRejected(f"Action {action.action_id} missing cited_source_text")
         if not action.cited_source_location or not action.cited_source_location.strip():

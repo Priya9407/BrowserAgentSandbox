@@ -1,0 +1,131 @@
+[
+  {
+    "trace_id": "225ae558-ae0c-400c-85c6-ce8809d055fe",
+    "id": "2e6f1495b3f84361",
+    "name": "demo_task",
+    "start_time": 1785391705163.1187,
+    "end_time": 1785391746271.9211,
+    "duration_ms": 41108.8,
+    "metadata": {
+      "user_task": "Search for the SoundWave Buds Lite earbuds and tell me the current price",
+      "screenshot_url": "file://C:\\Users\\archi\\BrowserAgentSandbox\\backend\\logs\\screenshots\\225ae558-ae0c-400c-85c6-ce8809d055fe.png",
+      "success_count": 3,
+      "fail_count": 0,
+      "elapsed_seconds": 41.11,
+      "demo_task_key": "product_price"
+    },
+    "subsegments": [
+      {
+        "id": "b0be3ce1a57c41b6",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785391713710.408,
+        "end_time": 1785391713710.408,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "12da5fc1875d4365",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "policy.evaluate",
+        "start_time": 1785391713710.408,
+        "end_time": 1785391719240.055,
+        "duration_ms": 5529.65,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "0eff587e9d3d400c",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785391722433.6355,
+        "end_time": 1785391723228.1626,
+        "duration_ms": 794.53,
+        "metadata": {
+          "step": 1,
+          "action_type": "navigate"
+        },
+        "error": null
+      },
+      {
+        "id": "b0d9c0a53fc94250",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785391723816.2073,
+        "end_time": 1785391723816.2073,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "fcc53ead71ef4c42",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "policy.evaluate",
+        "start_time": 1785391723816.2073,
+        "end_time": 1785391724973.4045,
+        "duration_ms": 1157.2,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "6187a325f4ea4450",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785391737435.2988,
+        "end_time": 1785391737442.045,
+        "duration_ms": 6.75,
+        "metadata": {
+          "step": 2,
+          "action_type": "scroll"
+        },
+        "error": null
+      },
+      {
+        "id": "1beaa53fb76a4783",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "gate.enforce_action_contract",
+        "start_time": 1785391738007.7134,
+        "end_time": 1785391738007.7134,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "f72cd70838e64111",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "policy.evaluate",
+        "start_time": 1785391738007.7134,
+        "end_time": 1785391741186.481,
+        "duration_ms": 3178.77,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "0d8dc8ed50d14125",
+        "parent_id": "2e6f1495b3f84361",
+        "name": "browser.execute_action.approved",
+        "start_time": 1785391744227.6816,
+        "end_time": 1785391744227.6816,
+        "duration_ms": 0.0,
+        "metadata": {
+          "step": 3,
+          "action_type": "done"
+        },
+        "error": null
+      }
+    ]
+  }
+]
