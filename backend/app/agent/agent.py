@@ -27,7 +27,7 @@ class BrowserAgent:
         self.user_task = None
         self.history: list[dict] = []
         self.step_count = 0
-        self.max_steps = 5
+        self.max_steps = 30
         self.plan: TaskPlan | None = None
         self.current_step_index = 0
         self.step_failures: dict[int, int] = {}   # step_index → consecutive failure count

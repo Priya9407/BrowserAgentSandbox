@@ -8,6 +8,43 @@ const DECISION_CLASS = {
 
 export default function ActionFeed({ actions, selectedId, onSelect }) {
   const [resolved, setResolved] = useState({});
+  const [autoApproveLow, setAutoApproveLow] = useState(false);
+
+  const toggleAutoApprove = async () => {
+    const nextState = !autoApproveLow;
+    setAutoApproveLow(nextState);
+    try {
+      await fetch("http://localhost:8000/toggle-auto-approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: nextState })
+      });
+
+      // If turning ON, immediately approve any queued LOW/UNKNOWN escalations
+      if (nextState) {
+        const pending = actions.filter(({ action, policy }) =>
+          policy.decision === "ESCALATE" &&
+          !resolved[action.action_id] &&
+          (policy.risk_level === "LOW" || policy.risk_level === "UNKNOWN")
+        );
+
+        if (pending.length > 0) {
+          const newResolved = { ...resolved };
+          await Promise.all(pending.map(async ({ action }) => {
+            newResolved[action.action_id] = "approved";
+            await fetch("http://localhost:8000/resolve-escalation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action_id: action.action_id, decision: "approved" })
+            });
+          }));
+          setResolved(newResolved);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to toggle auto-approve:", err);
+    }
+  };
 
   const handleResolve = async (e, action_id, decision) => {
     e.stopPropagation();
@@ -21,7 +58,25 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
 
   return (
     <div className="panel">
-      <h2>Action Feed</h2>
+      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+        <h2 style={{margin: 0}}>Action Feed</h2>
+        <button 
+          onClick={toggleAutoApprove}
+          style={{
+            background: autoApproveLow ? '#16a34a' : '#4b5563', 
+            color: 'white', 
+            padding: '6px 12px', 
+            border: 'none', 
+            borderRadius: '4px', 
+            cursor: 'pointer',
+            fontSize: '12px',
+            fontWeight: '600'
+          }}
+          title="Automatically approve LOW and UNKNOWN risk escalations"
+        >
+          {autoApproveLow ? "✓ Auto-Approving Low Risks" : "Auto-Approve Low Risks"}
+        </button>
+      </div>
 
       {actions.length === 0 && (
         <p className="empty-state">No actions yet — waiting for agent…</p>

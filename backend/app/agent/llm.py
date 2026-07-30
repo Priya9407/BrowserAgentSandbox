@@ -123,14 +123,16 @@ IMPORTANT RULES:
   Provide `role` (one of: button, link, textbox, combobox, checkbox,
   radio, listbox, menuitem, heading, img, searchbox, or "generic") and
   `label` (the element's visible text, placeholder, or aria-label).
-- `value` is required when action_type is "fill" or "type"; omit otherwise.
+- `value` is required when action_type is "fill" or "type". If action_type is "done" and you found an answer to the user's question, put the final answer in `value`. Omit `value` otherwise.
+- 🛑 DO NOT GUESS PASSWORDS! If the current step requires a password or 2FA code that you were not explicitly given, you MUST return action_type = "ask" and put your question in the `value` field.
+- If you encounter a quiz question, do NOT ask the user; answer it yourself using your own internal knowledge.
 - reasoning MUST explain why this specific action moves the task forward.
 - cited_source_text MUST be the exact visible text that justified this action.
 - cited_source_location MUST be a CSS selector pointing to that text's element.
 
 Return a JSON object with EXACTLY these keys:
 {{
-  "action_type": "click|fill|type|navigate|scroll|done",
+  "action_type": "click|fill|type|navigate|scroll|ask|done",
   "target": "<CSS selector>",
   "semantic_target": {{"role": "<role>", "label": "<visible text or aria-label>"}},
   "value": "<string or null>",

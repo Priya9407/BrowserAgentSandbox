@@ -112,7 +112,14 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   const [running, setRunning]         = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const [summary, setSummary]         = useState(null);  // done-summary card data
-  const [captchaPending, setCaptchaPending] = useState(false); // human needs to solve a CAPTCHA
+  const [captchaPending, setCaptchaPending] = useState(false);
+  const [askPending, setAskPending]   = useState(false);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askAnswer, setAskAnswer]     = useState("");
+  // Clarification state (pre-task questions)
+  const [clarifyQueue, setClarifyQueue]   = useState([]); // [{question, index, total}]
+  const [clarifyAnswer, setClarifyAnswer] = useState("");
+  const clarifySessionRef = useRef(null);
   const replanSeenRef                 = useRef(false);  // track whether a re-plan occurred this run
   const stepTimelineRef               = useRef([]);     // mirrors stepTimeline, read at terminal event
   const taskStartRef                  = useRef(null);    // Date.now() when a task starts, for elapsed time
@@ -131,17 +138,40 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
 
     const { status, text, step_event: se } = evt;
 
+    // ── Clarification questions (pre-task) ──────────────────────────────────
+    if (status === "ask" && se && se.ask_question != null && se.ask_index != null) {
+      clarifySessionRef.current = evt.session_id;
+      setClarifyQueue(prev => {
+        // Only add if not already in queue
+        if (prev.some(q => q.index === se.ask_index)) return prev;
+        return [...prev, { question: se.ask_question, index: se.ask_index, total: se.ask_total }];
+      });
+      return;
+    }
+
+    // Once all questions answered (status=planning with outcome=resolved), clear queue
+    if (status === "planning" && se && se.outcome === "resolved") {
+      setClarifyQueue([]);
+      clarifySessionRef.current = null;
+    }
+
     // ── Update step timeline ────────────────────────────────────────────────
     if (se && typeof se.step_number === "number") {
       // Detect re-plan: the re-plan recovery emits "↻ Re-planning" in text
       const isReplan =
         text.startsWith("↻") || (se.outcome === "failed" && replanSeenRef.current);
 
-      // CAPTCHA pause/resume — show or hide the Resume banner
+      // CAPTCHA or Ask pause/resume — show or hide the Resume banners
       if (se.outcome === "paused") {
-        setCaptchaPending(true);
-      } else if (captchaPending) {
+        if (se.ask_question) {
+          setAskPending(true);
+          setAskQuestion(se.ask_question);
+        } else {
+          setCaptchaPending(true);
+        }
+      } else {
         setCaptchaPending(false);
+        setAskPending(false);
       }
 
       if (text.startsWith("↻ New plan")) {
@@ -269,6 +299,10 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     setTimeline([]);
     setSummary(null);
     setCaptchaPending(false);
+    setAskPending(false);
+    setClarifyQueue([]);
+    setClarifyAnswer("");
+    clarifySessionRef.current = null;
     stepTimelineRef.current = [];
     taskStartRef.current = null;
     setRunning(false);
@@ -298,6 +332,63 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
         },
       ]);
       setCaptchaPending(true);
+    }
+  };
+
+  const handleSubmitAsk = async (e) => {
+    e.preventDefault();
+    if (!activeSessionId) return;
+    setAskPending(false);
+    try {
+      await fetch("http://localhost:8000/resolve-ask", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ session_id: activeSessionId, answer: askAnswer }),
+      });
+      setAskAnswer("");
+    } catch (err) {
+      setMessages(prev => [
+        ...prev,
+        {
+          id:     `err-${Date.now()}`,
+          role:   "status",
+          status: "error",
+          text:   `Failed to submit answer: ${err.message}`,
+        },
+      ]);
+      setAskPending(true);
+    }
+  };
+
+  const handleSubmitClarification = async (e) => {
+    e.preventDefault();
+    if (!clarifySessionRef.current || !clarifyQueue.length) return;
+    const current = clarifyQueue[0]; // answer them one at a time
+    const sessionId = clarifySessionRef.current;
+    const answer = clarifyAnswer.trim();
+    if (!answer) return;
+
+    // Remove the first question from the queue
+    setClarifyQueue(prev => prev.slice(1));
+    setClarifyAnswer("");
+
+    try {
+      const resp = await fetch("http://localhost:8000/resolve-clarification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question_index: current.index,
+          answer,
+        }),
+      });
+      const data = await resp.json();
+      if (data.status === "started") {
+        // Agent is now running
+        setRunning(true);
+      }
+    } catch (err) {
+      console.error("Failed to submit clarification:", err);
     }
   };
 
@@ -378,7 +469,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
               <span className="tl-card-title">Step History</span>
               <span className="tl-card-meta">
                 {stepTimeline.filter(s => s.outcome === "success").length}/
-                {stepTimeline.length} done
+                {Math.max(...stepTimeline.map(s => s.totalSteps || stepTimeline.length), stepTimeline.length)} done
               </span>
               <span className="tl-card-chevron">
                 {timelineOpen ? "▲" : "▼"}
@@ -423,6 +514,38 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           </div>
         )}
 
+        {/* ── Pre-task Clarification banner ─────────────────────────── */}
+        {clarifyQueue.length > 0 && (() => {
+          const current = clarifyQueue[0];
+          const answeredCount = current.total - clarifyQueue.length;
+          return (
+            <div className="captcha-banner" style={{ borderColor: "#6366f1", background: "rgba(99,102,241,0.12)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <span className="captcha-banner-icon">🤖</span>
+                <span style={{ fontSize: "11px", color: "#a5b4fc", fontWeight: 600 }}>
+                  Question {answeredCount + 1} of {current.total}
+                </span>
+              </div>
+              <span className="captcha-banner-text" style={{ color: "#e0e7ff" }}>
+                {current.question}
+              </span>
+              <form onSubmit={handleSubmitClarification} style={{ display: "flex", gap: "8px", marginTop: "8px", width: "100%" }}>
+                <input
+                  type="text"
+                  value={clarifyAnswer}
+                  onChange={e => setClarifyAnswer(e.target.value)}
+                  style={{ flex: 1, padding: "6px 10px", borderRadius: "6px", border: "1px solid #6366f1", background: "rgba(99,102,241,0.15)", color: "white" }}
+                  placeholder="Your answer…"
+                  autoFocus
+                />
+                <button type="submit" className="captcha-resume-btn" style={{ background: "#6366f1" }}>
+                  {answeredCount + 1 < current.total ? "Next →" : "Start Task ▶"}
+                </button>
+              </form>
+            </div>
+          );
+        })()}
+
         {/* ── CAPTCHA pause banner ─────────────────────────────────────── */}
         {captchaPending && (
           <div className="captcha-banner">
@@ -437,6 +560,32 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
             >
               I solved it — Resume
             </button>
+          </div>
+        )}
+
+        {/* ── Ask User banner ─────────────────────────────────────── */}
+        {askPending && (
+          <div className="captcha-banner">
+            <span className="captcha-banner-icon">❓</span>
+            <span className="captcha-banner-text">
+              {askQuestion}
+            </span>
+            <form onSubmit={handleSubmitAsk} style={{ display: "flex", gap: "8px", marginTop: "8px", width: "100%" }}>
+              <input
+                type="text"
+                value={askAnswer}
+                onChange={e => setAskAnswer(e.target.value)}
+                style={{ flex: 1, padding: "6px", borderRadius: "4px", border: "1px solid #ccc", background: "rgba(255, 255, 255, 0.1)", color: "white" }}
+                placeholder="Type your answer here..."
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="captcha-resume-btn"
+              >
+                Submit Answer
+              </button>
+            </form>
           </div>
         )}
 

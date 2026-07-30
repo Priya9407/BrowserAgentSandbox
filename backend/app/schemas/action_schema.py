@@ -10,10 +10,10 @@ class SemanticTarget(BaseModel):
 class AgentAction(BaseModel):
     action_id: str
     action_type: str
-    target: str                              # CSS selector (best-effort)
+    target: str | None = ""                         # CSS selector (best-effort)
     semantic_target: SemanticTarget = SemanticTarget()  # Role+text fallback
     value: str | None = None
     reasoning: str
-    cited_source_text: str
-    cited_source_location: str
+    cited_source_text: str | None = ""
+    cited_source_location: str | None = ""
     timestamp: str

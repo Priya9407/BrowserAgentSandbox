@@ -3,10 +3,11 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.agent.playwright_agent import run_browser_agent_async
+from app.agent.clarifier import get_clarification_questions, enrich_task_with_answers
 
 logging.basicConfig(level=logging.INFO)
 
@@ -14,7 +15,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,6 +26,9 @@ active_connections: list[WebSocket] = []
 
 # In-memory chat session history  { session_id: [messages] }
 chat_sessions: dict[str, list[dict]] = {}
+
+# Pending clarification state: { session_id: { goal, page_uri, headless, questions, answers[] } }
+pending_clarifications: dict[str, dict] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +111,7 @@ async def run_agent(
 class ChatRequest(BaseModel):
     goal: str
     url: str | None = None
-    headless: bool = True
+    headless: bool = False
 
 
 @app.post("/chat")
@@ -132,8 +136,8 @@ async def chat(body: ChatRequest):
     if body.url:
         page_uri = body.url
     else:
-        # Default demo page — benign shopping so ordinary tasks work
-        page_uri = (project_root / "test-pages" / "benign_checkout.html").as_uri()
+        # Default to blank so the LLM decides where to navigate based on the prompt
+        page_uri = "about:blank"
 
     # Launch agent in the background, passing a status_callback so it can
     # emit chat_status events at each step without knowing about WebSockets.
@@ -150,6 +154,37 @@ async def chat(body: ChatRequest):
             payload["step_event"] = step_event
         await _broadcast(payload)
 
+    # ---- Clarification phase ----
+    # Ask the LLM if this task needs more information before starting.
+    questions = get_clarification_questions(body.goal)
+
+    if questions:
+        # Store pending state for /resolve-clarification to pick up
+        pending_clarifications[session_id] = {
+            "goal":      body.goal,
+            "page_uri":  page_uri,
+            "headless":  body.headless,
+            "questions": questions,
+            "answers":   [None] * len(questions),
+        }
+        # Broadcast each question one-by-one as ask events
+        for i, q in enumerate(questions):
+            await _broadcast({
+                "type":       "chat_status",
+                "session_id": session_id,
+                "status":     "ask",
+                "text":       q,
+                "step_event": {
+                    "outcome":          "paused",
+                    "ask_question":     q,
+                    "ask_index":        i,
+                    "ask_total":        len(questions),
+                    "session_id":       session_id,
+                },
+            })
+        return {"session_id": session_id, "status": "clarifying", "questions": questions}
+
+    # No clarification needed — launch immediately
     asyncio.create_task(
         _run_chat_agent(
             session_id=session_id,
@@ -256,6 +291,84 @@ def resolve_escalation(payload: EscalationResolution):
     return {"status": "not found"}
 
 
+class AutoApproveToggle(BaseModel):
+    enabled: bool
+
+@app.post("/toggle-auto-approve")
+def toggle_auto_approve(payload: AutoApproveToggle):
+    import app.agent.escalation_state as es
+    es.auto_approve_low_unknown = payload.enabled
+    return {"status": "success", "enabled": es.auto_approve_low_unknown}
+
+
+# ---------------------------------------------------------------------------
+# /resolve-clarification — user answers a pre-task clarifying question
+# ---------------------------------------------------------------------------
+class ClarificationAnswer(BaseModel):
+    session_id: str
+    question_index: int
+    answer: str
+
+
+@app.post("/resolve-clarification")
+async def resolve_clarification(payload: ClarificationAnswer):
+    state = pending_clarifications.get(payload.session_id)
+    if not state:
+        return {"status": "not_found"}
+
+    # Record this answer
+    if 0 <= payload.question_index < len(state["answers"]):
+        state["answers"][payload.question_index] = payload.answer
+
+    # Check if all answers are collected
+    if all(a is not None for a in state["answers"]):
+        # Build enriched task
+        qa_pairs = [
+            {"question": state["questions"][i], "answer": state["answers"][i]}
+            for i in range(len(state["questions"]))
+        ]
+        enriched_goal = enrich_task_with_answers(state["goal"], qa_pairs)
+
+        # Re-create the status_callback for this session
+        async def status_callback(status: str, text: str, step_event: dict | None = None):
+            msg = {"role": "agent", "text": text}
+            if payload.session_id in chat_sessions:
+                chat_sessions[payload.session_id].append(msg)
+            p = {
+                "type": "chat_status",
+                "session_id": payload.session_id,
+                "status": status,
+                "text": text,
+            }
+            if step_event:
+                p["step_event"] = step_event
+            await _broadcast(p)
+
+        # Broadcast that we're now starting execution
+        await _broadcast({
+            "type": "chat_status",
+            "session_id": payload.session_id,
+            "status": "planning",
+            "text": f'Got all details — Planning how to: "{state["goal"]}"',
+            "step_event": {"outcome": "resolved"},
+        })
+
+        # Launch the agent with the enriched task
+        asyncio.create_task(
+            _run_chat_agent(
+                session_id=payload.session_id,
+                goal=enriched_goal,
+                page_uri=state["page_uri"],
+                headless=state["headless"],
+                status_callback=status_callback,
+            )
+        )
+        del pending_clarifications[payload.session_id]
+        return {"status": "started"}
+
+    return {"status": "waiting", "remaining": state["answers"].count(None)}
+
+
 # ---------------------------------------------------------------------------
 # /resolve-captcha — human signals they solved a CAPTCHA in the browser
 # ---------------------------------------------------------------------------
@@ -268,6 +381,23 @@ def resolve_captcha(payload: CaptchaResolution):
     from app.agent.captcha_state import pending_captchas
     if payload.session_id in pending_captchas:
         pending_captchas[payload.session_id] = "resolved"
+        return {"status": "success"}
+    return {"status": "not found"}
+
+
+# ---------------------------------------------------------------------------
+# /resolve-ask — human answers the agent's question
+# ---------------------------------------------------------------------------
+class AskResolution(BaseModel):
+    session_id: str
+    answer: str
+
+@app.post("/resolve-ask")
+def resolve_ask(payload: AskResolution):
+    from app.agent.ask_state import pending_asks
+    if payload.session_id in pending_asks:
+        pending_asks[payload.session_id]["status"] = "resolved"
+        pending_asks[payload.session_id]["answer"] = payload.answer
         return {"status": "success"}
     return {"status": "not found"}
 
@@ -465,7 +595,10 @@ class ExtensionChatRequest(BaseModel):
 
 
 @app.post("/extension/chat")
-async def extension_chat(body: ExtensionChatRequest):
+async def extension_chat(body: ExtensionChatRequest, request: Request):
+    origin = request.headers.get("origin")
+    if not _is_allowed_extension_origin(origin):
+        raise HTTPException(status_code=403, detail="Invalid extension origin")
     from app.agent.planner import generate_plan
     from app.agent.agent import BrowserAgent
     from app.agent.llm import get_next_action

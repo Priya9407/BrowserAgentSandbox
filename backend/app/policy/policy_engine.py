@@ -151,7 +151,8 @@ class PolicyEngine:
 
         # Cited text traces back to hidden DOM content.
         if origin == Origin.HIDDEN_PAGE_CONTENT:
-            return PolicyDecision.DENY if category in _critical else PolicyDecision.ESCALATE
+            _hard_deny = {RiskCategory.CREDENTIAL, RiskCategory.PAYMENT, RiskCategory.DELETE}
+            return PolicyDecision.DENY if category in _hard_deny else PolicyDecision.ESCALATE
 
         # Page has hidden elements (heuristic detector), agent didn't cite them.
         if hidden:

@@ -292,7 +292,7 @@ def run_browser_agent(
     completed_steps: list[dict] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless, slow_mo=300)
+        browser = p.chromium.launch(headless=headless)
         page = browser.new_page()
         page.set_viewport_size({"width": 1280, "height": 900})
 
@@ -407,6 +407,53 @@ def run_browser_agent(
             print(f"\n--- Step {browser_agent.step_count} ---")
             print(action.model_dump())
 
+            # ── Ask signal ────────────────────────────────────────────────
+            if action.action_type == "ask":
+                from app.agent.ask_state import pending_asks
+                pending_asks[trace_seg.trace_id] = {"status": "pending", "question": action.value, "answer": None}
+                
+                _emit(
+                    "step",
+                    f"❓ Agent asks: {action.value}",
+                    {
+                        "step_number": step_idx + 1,
+                        "total_steps": total,
+                        "goal": browser_agent.current_step_goal,
+                        "outcome": "paused",
+                        "retry": retry_count,
+                        "session_id": trace_seg.trace_id,
+                        "ask_question": action.value,
+                    },
+                )
+                
+                waited_ms = 0
+                timeout_ms = 5 * 60 * 1000
+                while pending_asks.get(trace_seg.trace_id, {}).get("status") == "pending" and waited_ms < timeout_ms:
+                    page.wait_for_timeout(1000)
+                    waited_ms += 1000
+                    
+                ask_state = pending_asks.pop(trace_seg.trace_id, {})
+                if ask_state.get("status") == "resolved":
+                    ans = ask_state.get("answer")
+                    if browser_agent.history:
+                        browser_agent.history[-1]["reasoning"] += f"\n[User answered: {ans}]"
+                    _emit(
+                        "step",
+                        f"▶ Resuming with user answer: {ans}",
+                        {
+                            "step_number": step_idx + 1,
+                            "total_steps": total,
+                            "goal": browser_agent.current_step_goal,
+                            "outcome": "running",
+                            "retry": retry_count,
+                        },
+                    )
+                    continue
+                else:
+                    task_outcome = "error"
+                    task_outcome_reason = "Timed out waiting for user answer."
+                    break
+
             # ── Done signal ───────────────────────────────────────────────
             if action.action_type == "done":
                 if browser_agent.plan and not browser_agent.is_last_step():
@@ -427,9 +474,28 @@ def run_browser_agent(
                     browser_agent.advance_step()
                     continue
                 else:
-                    _emit("step", "All steps complete.")
+                    ans = action.value or (action.reasoning if "price" in action.reasoning.lower() else None)
+                    msg = f"All steps complete. Result: {ans}" if action.value else "All steps complete."
+                    
+                    if browser_agent.plan and browser_agent.plan.steps:
+                        goal = browser_agent.current_step_goal
+                        _emit(
+                            "step",
+                            f"✓ Completed: {goal}\n\n{msg}",
+                            {
+                                "step_number": step_idx + 1,
+                                "total_steps": total,
+                                "goal": goal,
+                                "outcome": "success",
+                                "retry": retry_count,
+                            },
+                        )
+                        browser_agent.record_step_success()
+                    else:
+                        _emit("step", msg)
+                    
                     task_outcome = "done"
-                    task_outcome_reason = None
+                    task_outcome_reason = ans
                     break
 
             # ── Gate ─────────────────────────────────────────────────────
@@ -450,6 +516,12 @@ def run_browser_agent(
                 visible_page_text=visible_page_text,
                 hidden_page_text=hidden_page_text,
             )
+            import app.agent.escalation_state as es
+            if result.decision == PolicyDecision.ESCALATE and es.auto_approve_low_unknown and result.risk_level in ("LOW", "UNKNOWN"):
+                result.decision = PolicyDecision.ALLOW
+                result.reason = f"Auto-approved {result.risk_level} risk action."
+                _emit("step", f"Auto-approved {result.risk_level} risk action: {action.action_type}")
+
             print(result.model_dump())
 
             if result.decision != PolicyDecision.ALLOW:
@@ -512,7 +584,7 @@ def run_browser_agent(
                 task_outcome_reason = f"Blocked by policy: {result.reason}"
                 break
 
-        page.wait_for_timeout(2000)
+        # removed arbitrary 2s delay
 
         # ── Screenshot placeholder (Milestone 3 item C — S3, optional) ────
         # Falls back to a local file path when AWS isn't configured yet;
@@ -529,6 +601,13 @@ def run_browser_agent(
             trace_seg.set_metadata(screenshot_url=screenshot_url)
         except Exception as exc:
             print(f"[playwright_agent] screenshot/upload skipped: {exc}")
+
+        if not headless:
+            print("[playwright_agent] Task complete. Keeping browser open for 1 hour for manual inspection...")
+            try:
+                page.wait_for_timeout(3600_000)
+            except Exception:
+                pass
 
         browser.close()
 

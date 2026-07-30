@@ -1,0 +1,173 @@
+[
+  {
+    "trace_id": "f582f181-8bfb-4276-8ff0-6e855876ee4d",
+    "id": "088510105d6b43ee",
+    "name": "chat_task",
+    "start_time": 1785390219375.378,
+    "end_time": 1785390901405.053,
+    "duration_ms": 682029.68,
+    "metadata": {
+      "user_task": "Go to https://priya9407.github.io/QuizForFrontier/ and complete the quiz for me.",
+      "screenshot_url": "file://C:\\Nexiva\\Frontier\\version1\\backend\\logs\\screenshots\\f582f181-8bfb-4276-8ff0-6e855876ee4d.png",
+      "success_count": 10,
+      "fail_count": 0,
+      "elapsed_seconds": 682.03
+    },
+    "subsegments": [
+      {
+        "id": "1d074cefa07443f0",
+        "parent_id": "088510105d6b43ee",
+        "name": "planner.generate_plan",
+        "start_time": 1785390219376.2708,
+        "end_time": 1785390231182.8203,
+        "duration_ms": 11806.55,
+        "metadata": {},
+        "error": null
+      },
+      {
+        "id": "927036b6f84d4252",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390234093.3906,
+        "end_time": 1785390252680.7468,
+        "duration_ms": 18587.36,
+        "metadata": {
+          "step": 0
+        },
+        "error": null
+      },
+      {
+        "id": "52c001a7b04d4a41",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390252738.6357,
+        "end_time": 1785390301208.5972,
+        "duration_ms": 48469.96,
+        "metadata": {
+          "step": 1
+        },
+        "error": null
+      },
+      {
+        "id": "d3e7344467b34065",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390317730.422,
+        "end_time": 1785390336333.683,
+        "duration_ms": 18603.26,
+        "metadata": {
+          "step": 2
+        },
+        "error": null
+      },
+      {
+        "id": "5b4481c04ff14615",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390338155.524,
+        "end_time": 1785390469567.873,
+        "duration_ms": 131412.35,
+        "metadata": {
+          "step": 3
+        },
+        "error": null
+      },
+      {
+        "id": "28b79e3f459c4ed2",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390471527.2104,
+        "end_time": 1785390483483.6519,
+        "duration_ms": 11956.44,
+        "metadata": {
+          "step": 4
+        },
+        "error": null
+      },
+      {
+        "id": "1b9bd09bca1f4530",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390485041.0295,
+        "end_time": 1785390500589.1536,
+        "duration_ms": 15548.12,
+        "metadata": {
+          "step": 5
+        },
+        "error": null
+      },
+      {
+        "id": "6819f07fddb44e1d",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390533471.9294,
+        "end_time": 1785390540619.4453,
+        "duration_ms": 7147.52,
+        "metadata": {
+          "step": 6
+        },
+        "error": null
+      },
+      {
+        "id": "194b8b438a1d490a",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390579392.836,
+        "end_time": 1785390605344.2065,
+        "duration_ms": 25951.37,
+        "metadata": {
+          "step": 7
+        },
+        "error": null
+      },
+      {
+        "id": "3a6a4bd67fd44ae2",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390606707.5376,
+        "end_time": 1785390702414.8738,
+        "duration_ms": 95707.34,
+        "metadata": {
+          "step": 8
+        },
+        "error": null
+      },
+      {
+        "id": "6ba412728e0c4e50",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390703775.2302,
+        "end_time": 1785390709787.9976,
+        "duration_ms": 6012.77,
+        "metadata": {
+          "step": 9
+        },
+        "error": null
+      },
+      {
+        "id": "0ebe8391d181405d",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390712056.9307,
+        "end_time": 1785390737580.5579,
+        "duration_ms": 25523.63,
+        "metadata": {
+          "step": 10
+        },
+        "error": null
+      },
+      {
+        "id": "2dd9e29283af4d87",
+        "parent_id": "088510105d6b43ee",
+        "name": "llm.get_next_action",
+        "start_time": 1785390737639.5076,
+        "end_time": 1785390779627.0234,
+        "duration_ms": 41987.52,
+        "metadata": {
+          "step": 11
+        },
+        "error": null
+      }
+    ]
+  }
+]

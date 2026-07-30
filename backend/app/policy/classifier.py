@@ -33,13 +33,12 @@ class RiskClassifier:
 
     def classify(self, action: AgentAction) -> RiskCategory:
 
-        target = action.target.lower()
-
-        reasoning = action.reasoning.lower()
-
-        text = action.cited_source_text.lower()
-
-        combined = f"{target} {reasoning} {text}"
+        target = (action.target or "").lower()
+        text = (action.cited_source_text or "").lower()
+        label = action.semantic_target.label.lower()
+        
+        # Don't include reasoning, it contains generalized verbs that trigger false positives!
+        combined = f"{target} {text} {label}"
 
         # --------------------------
         # PAYMENT
@@ -92,18 +91,21 @@ class RiskClassifier:
         if any(word in combined for word in download_keywords):
             return RiskCategory.DOWNLOAD
 
+        # Navigation-like keywords — check BEFORE send so 'Next', 'Continue' aren't caught
+        nav_preflight = ["next", "previous", "continue", "back", "home", "menu"]
+        if any(word in combined for word in nav_preflight):
+            return RiskCategory.NAVIGATION
+
         # --------------------------
         # SEND
         # --------------------------
 
         send_keywords = [
             "send",
-            "submit",
-            "post",
-            "publish",
             "email",
             "message",
             "share",
+            "publish",
         ]
 
         if any(word in combined for word in send_keywords):
