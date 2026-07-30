@@ -20,30 +20,36 @@ const STATUS_ICON = {
   error:    "❌",
 };
 
-// Demo task suggestions — prefer simple, reliable pages for demo lock
+// ---------------------------------------------------------------------------
+// Demo task chips — use local static pages for zero network dependency.
+// Each entry with a `demo_task_key` is routed to POST /chat-demo (scripted,
+// instant, deterministic).  Entries without a key fall through to POST /chat
+// (live LLM pipeline) — none currently, but the shape supports it.
+//
+// file:// URLs here are informational only (shown in the URL field if the
+// user toggles it); the actual page URI is resolved server-side in
+// demo_scripts.py so the backend path is always correct regardless of OS.
+// ---------------------------------------------------------------------------
 const DEMO_TASKS = [
   {
-    label: "Product price",
-    goal:  "Search for the Sony WH-1000XM5 headphones and tell me the current price",
-    // Use a simple search results page (less dynamic than travel widgets)
-    url:   "https://www.google.com/search?q=Sony+WH-1000XM5+price",
+    label:         "Product price",
+    goal:          "Search for the SoundWave Buds Lite earbuds and tell me the current price",
+    demo_task_key: "product_price",
   },
   {
-    label: "Check a flight (simple)",
-    goal:  "Find one flight result for Delhi to Goa next week and report the price and airline",
-    // Use a generic search for flights instead of the Google Flights widget which can be flaky
-    url:   "https://www.google.com/search?q=delhi+to+goa+flight+one+way+next+week",
+    label:         "Check a flight",
+    goal:          "Find a flight result on SkyHigh Flights and report the price",
+    demo_task_key: "check_flight",
   },
   {
-    label: "Restaurant hours",
-    goal:  "Look up the opening hours of Domino's Pizza in Bangalore and report them",
-    url:   "https://www.google.com/search?q=Dominos+Pizza+Bangalore+opening+hours",
+    label:         "Buy laptop",
+    goal:          "Buy the laptop listed on the shopping page",
+    demo_task_key: "buy_laptop",
   },
   {
-    label: "Example site",
-    goal:  "Open example.com and tell me the page title",
-    // A static, highly reliable page for demos
-    url:   "https://example.com/",
+    label:         "Restaurant hours",
+    goal:          "Look up the opening hours of Spice Garden restaurant and report them",
+    demo_task_key: "restaurant_hours",
   },
 ];
 
@@ -207,7 +213,16 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   // -------------------------------------------------------------------------
   // Submit
   // -------------------------------------------------------------------------
-  const handleSubmit = async (goalText, startUrl) => {
+
+  /**
+   * handleSubmit — called by both the free-text Send button and the demo chips.
+   *
+   * @param {string}      [goalText]     - pre-filled goal (demo chips only)
+   * @param {string}      [startUrl]     - pre-filled URL (free-text path only)
+   * @param {string|null} [demoTaskKey]  - if set, routes to POST /chat-demo
+   *                                      instead of POST /chat
+   */
+  const handleSubmit = async (goalText, startUrl, demoTaskKey) => {
     const goal = (goalText ?? input).trim();
     if (!goal || running) return;
 
@@ -229,6 +244,25 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     ]);
 
     try {
+      // ── Demo chip path → /chat-demo (scripted, no LLM) ─────────────────
+      if (demoTaskKey) {
+        const res = await fetch("http://localhost:8000/chat-demo", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ demo_task_key: demoTaskKey, headless: false }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => res.statusText);
+          throw new Error(`Server returned ${res.status}: ${errText}`);
+        }
+
+        const data = await res.json();
+        onSessionStart?.(data.session_id);
+        return;
+      }
+
+      // ── Free-text path → /chat (live LLM pipeline, unchanged) ──────────
       const res = await fetch("http://localhost:8000/chat", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -334,7 +368,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
                 <button
                   key={t.label}
                   className="demo-chip"
-                  onClick={() => handleSubmit(t.goal, t.url)}
+                  onClick={() => handleSubmit(t.goal, undefined, t.demo_task_key)}
                   disabled={running}
                 >
                   {t.label}
