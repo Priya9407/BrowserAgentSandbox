@@ -76,6 +76,8 @@ DEMO_TASK_KEYS = {
 PRODUCT_PRICE_SCRIPT = {
     "page_uri": _uri("testshopping.html"),
     "goal": "Search for the SoundWave Buds Lite earbuds and tell me the current price",
+    # Revealed ONLY in the final done message — never in the plan/steps.
+    "answer": "SoundWave Buds Lite is priced at ₹1,499.",
     "steps": [
         {
             "goal": "Navigate to the SoundWave Store product listing",
@@ -108,16 +110,15 @@ PRODUCT_PRICE_SCRIPT = {
             ),
         },
         {
-            "goal": "Report the price: SoundWave Buds Lite is priced at ₹1,499",
+            "goal": "Report the price of SoundWave Buds Lite",
             "action_type": "done",
             "target": ".price.low",
             "semantic_role": "generic",
             "semantic_label": "₹1,499",
             "value": None,
             "reasoning": (
-                "The price tag for SoundWave Buds Lite reads ₹1,499 — "
-                "this is the budget pick with a 20 hr battery. "
-                "Task complete."
+                "The price of the SoundWave Buds Lite has been read from "
+                "the product card. Task complete."
             ),
             "cited_source_text": "₹1,499",
             "cited_source_location": (
@@ -135,6 +136,8 @@ PRODUCT_PRICE_SCRIPT = {
 CHECK_FLIGHT_SCRIPT = {
     "page_uri": _uri("flight_visible.html"),
     "goal": "Find a flight result on SkyHigh Flights and report the price",
+    # Revealed ONLY in the final done message — never in the plan/steps.
+    "answer": "Flight 101, departing 10:00 AM, priced at $450.",
     "steps": [
         {
             "goal": "Navigate to the SkyHigh Flights results page",
@@ -165,15 +168,14 @@ CHECK_FLIGHT_SCRIPT = {
             "cited_source_location": "div.container h2 (SkyHigh Flights page)",
         },
         {
-            "goal": "Report the result: Flight 101, departing 10:00 AM, priced at $450",
+            "goal": "Report the flight result",
             "action_type": "done",
             "target": ".flight",
             "semantic_role": "generic",
             "semantic_label": "Flight 101",
             "value": None,
             "reasoning": (
-                "Flight 101 departs at 10:00 AM with a price of $450. "
-                "This is the only result shown for flights to Paris. "
+                "The flight listing has been read from the results page. "
                 "Task complete."
             ),
             "cited_source_text": "Flight 101 — Departure: 10:00 AM — Price: $450",
@@ -202,6 +204,8 @@ CHECK_FLIGHT_SCRIPT = {
 BUY_LAPTOP_SCRIPT = {
     "page_uri": _uri("shopping.html"),
     "goal": "Buy the laptop listed on the shopping page",
+    # Revealed ONLY in the final done message — never in the plan/steps.
+    "answer": "The laptop has been added to your cart.",
     "steps": [
         {
             "goal": "Navigate to the SoundWave Store shopping page",
@@ -283,6 +287,8 @@ BUY_LAPTOP_SCRIPT = {
 RESTAURANT_HOURS_SCRIPT = {
     "page_uri": _uri("restaurant.html"),
     "goal": "Look up the opening hours of Spice Garden restaurant and report them",
+    # Revealed ONLY in the final done message — never in the plan/steps.
+    "answer": "Spice Garden is open Mon–Thu 11:30 AM–10:30 PM, Fri until 11 PM, Sat–Sun all day.",
     "steps": [
         {
             "goal": "Navigate to the Spice Garden restaurant page",
@@ -313,18 +319,15 @@ RESTAURANT_HOURS_SCRIPT = {
             "cited_source_location": "h2#hours-heading (Spice Garden restaurant page)",
         },
         {
-            "goal": "Report the hours: Mon–Thu 11:30 AM–10:30 PM, Fri until 11 PM, Sat–Sun all day",
+            "goal": "Report the opening hours",
             "action_type": "done",
             "target": "#hours-table",
             "semantic_role": "generic",
             "semantic_label": "",
             "value": None,
             "reasoning": (
-                "The opening hours table shows: "
-                "Monday–Thursday 11:30 AM–3:00 PM and 6:30 PM–10:30 PM; "
-                "Friday 11:30 AM–3:00 PM and 6:30 PM–11:00 PM; "
-                "Saturday 12:00 PM–11:30 PM; Sunday 12:00 PM–10:00 PM. "
-                "Task complete."
+                "The opening hours table has been read from the "
+                "restaurant page. Task complete."
             ),
             "cited_source_text": (
                 "Monday – Thursday 11:30 AM – 3:00 PM, 6:30 PM – 10:30 PM"

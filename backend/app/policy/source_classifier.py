@@ -94,11 +94,18 @@ class SourceClassifier:
             return Origin.USER_TASK
 
         # ------------------------------------------------------------------
-        # 2. Does the cited text appear in HIDDEN page content?
-        #    Check hidden BEFORE visible — text in a hidden element may also
-        #    appear in the full DOM dump; we want the stricter classification.
+        # 2. Does the cited text appear in HIDDEN page content ONLY?
+        #    Only flag as HIDDEN if the text is UNIQUE to hidden elements.
+        #    If the same text also appears in visible content (e.g. screen
+        #    reader labels on Google Search), classify it as VISIBLE instead.
+        #    This prevents false positives on real websites that have
+        #    both visible labels and hidden accessibility text.
         # ------------------------------------------------------------------
         if hidden and self._found_in_page(cited, hidden):
+            # If the text also appears in visible content, it's not truly
+            # hidden — it's just duplicated for accessibility. Treat as visible.
+            if visible and self._found_in_page(cited, visible):
+                return Origin.VISIBLE_PAGE_CONTENT
             return Origin.HIDDEN_PAGE_CONTENT
 
         # ------------------------------------------------------------------

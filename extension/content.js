@@ -56,6 +56,10 @@ if (typeof window.__frontierInjected === "undefined") {
         sendResponse({ text: document.body.innerText ?? "" });
         return false;
 
+      case "GET_PAGE_STATE":
+        sendResponse({ page_state: _capturePageState() });
+        return false;
+
       case "SET_AGENT_ACTIVE":
         _setIndicator(msg.active);
         sendResponse({ ok: true });
@@ -79,7 +83,10 @@ if (typeof window.__frontierInjected === "undefined") {
         if (!el) return { ok: false, error: `click: element not found — ${target}` };
         el.focus();
         el.click();
-        return { ok: true };
+        // Wait a beat for DOM to update, then capture fresh state
+        await _sleep(300);
+        const pageState = _capturePageState();
+        return { ok: true, page_state: pageState };
       }
 
       case "fill":
@@ -98,14 +105,18 @@ if (typeof window.__frontierInjected === "undefined") {
         } else {
           el.value = value ?? "";
         }
-        return { ok: true };
+        await _sleep(200);
+        const pageState = _capturePageState();
+        return { ok: true, page_state: pageState };
       }
 
       case "navigate": {
         const url = target || value;
         if (!url) return { ok: false, error: "navigate: no URL provided" };
         window.location.href = url;
-        return { ok: true };
+        // Navigation unloads the page — wait for the new page to settle
+        await _sleep(2000);
+        return { ok: true, page_state: _capturePageState() };
       }
 
       case "scroll": {
@@ -115,13 +126,13 @@ if (typeof window.__frontierInjected === "undefined") {
         } else {
           window.scrollBy({ top: 400, behavior: "smooth" });
         }
-        return { ok: true };
+        return { ok: true, page_state: _capturePageState() };
       }
 
       case "read": {
         const el = _resolve(target, semantic_target);
         if (!el) return { ok: false, error: `read: element not found — ${target}` };
-        return { ok: true, result: el.innerText ?? el.textContent ?? "" };
+        return { ok: true, result: el.innerText ?? el.textContent ?? "", page_state: _capturePageState() };
       }
 
       case "done":
@@ -130,6 +141,77 @@ if (typeof window.__frontierInjected === "undefined") {
       default:
         return { ok: false, error: `Unknown action_type: ${action_type}` };
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Page state capture — returns visible_text, accessibility_tree, url
+  // -------------------------------------------------------------------------
+  function _capturePageState() {
+    try {
+      return {
+        visible_text: document.body?.innerText ?? "",
+        accessibility_tree: _buildAccessibilityTree(document.body),
+        url: window.location.href,
+        title: document.title,
+      };
+    } catch (e) {
+      return {
+        visible_text: document.body?.innerText ?? "",
+        url: window.location.href,
+        title: document.title,
+      };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Build a minimal accessibility tree (interactive elements only)
+  // -------------------------------------------------------------------------
+  function _buildAccessibilityTree(root) {
+    if (!root || root.nodeType !== 1) return null;
+    
+    const role = root.getAttribute("role") || _implicitRole(root);
+    const interactive = ["button","link","textbox","combobox","checkbox","radio",
+                         "listbox","menuitem","searchbox","heading","img",
+                         "slider","tab","treeitem","switch"];
+    
+    // Only include interactive elements and their structural parents
+    const children = [];
+    for (const child of root.children) {
+      const childTree = _buildAccessibilityTree(child);
+      if (childTree) children.push(childTree);
+    }
+    
+    if (children.length === 0 && !interactive.includes(role) && !interactive.includes(_implicitRole(root))) {
+      return null;  // skip non-interactive leaf nodes
+    }
+    
+    return {
+      tag: root.tagName?.toLowerCase() || "?",
+      role: role,
+      name: root.getAttribute("aria-label") || root.getAttribute("placeholder") || root.innerText?.slice(0,80) || "",
+      state: {
+        disabled: root.disabled || root.getAttribute("aria-disabled") === "true",
+        checked: root.checked || root.getAttribute("aria-checked") === "true",
+        selected: root.getAttribute("aria-selected") === "true",
+        expanded: root.getAttribute("aria-expanded") === "true",
+      },
+      children,
+    };
+  }
+
+  function _implicitRole(el) {
+    const tag = el.tagName?.toLowerCase();
+    const map = {
+      a: "link", input: "textbox", button: "button", select: "combobox",
+      textarea: "textbox", img: "img", h1: "heading", h2: "heading",
+      h3: "heading", h4: "heading", h5: "heading", h6: "heading",
+      nav: "navigation", form: "form", table: "table",
+    };
+    return map[tag] || "generic";
+  }
+
+  function _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // -------------------------------------------------------------------------

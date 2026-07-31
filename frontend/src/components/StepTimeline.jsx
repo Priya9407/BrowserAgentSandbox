@@ -19,12 +19,14 @@
  *   }
  */
 
+import { Check, Loader2, Pause, RefreshCw, SkipForward, X } from "lucide-react";
+
 const OUTCOME_META = {
-  running: { icon: "⏳", label: "Running",  cls: "tl-running"  },
-  success: { icon: "✓",  label: "Done",     cls: "tl-success"  },
-  failed:  { icon: "✗",  label: "Failed",   cls: "tl-failed"   },
-  skipped: { icon: "⤳",  label: "Skipped",  cls: "tl-skipped"  },
-  paused:  { icon: "⏸",  label: "Paused",   cls: "tl-paused"   },
+  running: { icon: <Loader2 size={12} className="spin" />,  label: "Running", cls: "tl-running" },
+  success: { icon: <Check size={12} strokeWidth={3} />,     label: "Done",    cls: "tl-success" },
+  failed:  { icon: <X size={12} strokeWidth={3} />,         label: "Failed",  cls: "tl-failed" },
+  skipped: { icon: <SkipForward size={12} strokeWidth={3} />, label: "Skipped", cls: "tl-skipped" },
+  paused:  { icon: <Pause size={12} strokeWidth={3} />,     label: "Paused",  cls: "tl-paused" },
 };
 
 export default function StepTimeline({ steps }) {
@@ -50,7 +52,7 @@ export default function StepTimeline({ steps }) {
               {/* Re-plan marker */}
               {s.isReplan && (
                 <div className="tl-replan-badge" title="Plan was revised at this point">
-                  ↻ re-planned
+                  <RefreshCw size={11} /> re-planned
                 </div>
               )}
 

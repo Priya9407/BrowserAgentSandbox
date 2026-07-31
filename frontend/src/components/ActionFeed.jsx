@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AlertTriangle, Check, EyeOff, Shield, ShieldCheck, X } from "lucide-react";
 
 const DECISION_CLASS = {
   ALLOW: "decision-allow",
@@ -22,10 +23,10 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
 
       // If turning ON, immediately approve any queued LOW/UNKNOWN escalations
       if (nextState) {
-        const pending = actions.filter(({ action, policy }) =>
-          policy.decision === "ESCALATE" &&
-          !resolved[action.action_id] &&
-          (policy.risk_level === "LOW" || policy.risk_level === "UNKNOWN")
+          const pending = actions.filter(({ action, policy, execution_requires_approval }) =>
+            (policy.decision === "ESCALATE" || execution_requires_approval) &&
+            !resolved[action.action_id] &&
+            (policy.risk_level === "LOW" || policy.risk_level === "UNKNOWN")
         );
 
         if (pending.length > 0) {
@@ -74,7 +75,9 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
           }}
           title="Automatically approve LOW and UNKNOWN risk escalations"
         >
-          {autoApproveLow ? "✓ Auto-Approving Low Risks" : "Auto-Approve Low Risks"}
+          {autoApproveLow
+            ? <><ShieldCheck size={13} /> Auto-Approving Low Risks</>
+            : <><Shield size={13} /> Auto-Approve Low Risks</>}
         </button>
       </div>
 
@@ -83,12 +86,15 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
       )}
 
       <ul className="action-list">
-        {actions.map(({ action, policy }) => {
+        {actions.map((record) => {
+          const { action, policy } = record;
           const isSelected = action.action_id === selectedId;
           const decisionClass =
             DECISION_CLASS[policy.decision] || "decision-unknown";
           
-          const isPending = policy.decision === "ESCALATE" && !resolved[action.action_id];
+          const isPending =
+            (policy.decision === "ESCALATE" || record.execution_requires_approval) &&
+            !resolved[action.action_id];
           const resolution = resolved[action.action_id];
 
           return (
@@ -111,10 +117,10 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
                   {policy.risk_level}
                 </span>
                 {policy.hidden_content_detected && (
-                  <span className="hidden-flag">⚠ hidden content</span>
+                  <span className="hidden-flag"><EyeOff size={11} /> hidden content</span>
                 )}
                 {policy.topic_drift_detected && (
-                  <span className="hidden-flag">⚠ topic drift</span>
+                  <span className="hidden-flag"><AlertTriangle size={11} /> topic drift</span>
                 )}
               </div>
               
@@ -124,13 +130,13 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
                     onClick={(e) => handleResolve(e, action.action_id, 'approved')}
                     style={{background: '#16a34a', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                   >
-                    Approve
+                    <Check size={13} /> Approve
                   </button>
                   <button 
                     onClick={(e) => handleResolve(e, action.action_id, 'denied')}
                     style={{background: '#dc2626', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                   >
-                    Deny
+                    <X size={13} /> Deny
                   </button>
                 </div>
               )}

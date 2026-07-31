@@ -1,13 +1,14 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.agent.playwright_agent import run_browser_agent_async
-from app.agent.clarifier import get_clarification_questions, enrich_task_with_answers
+from app.agent.clarifier import enrich_task_with_answers
 from app.agent.demo_runner import run_demo_agent_async
 from app.agent.demo_scripts import DEMO_SCRIPTS
 
@@ -133,13 +134,18 @@ async def chat(body: ChatRequest):
         "text": f'Planning how to: "{body.goal}"',
     })
 
-    # Resolve the start URL
-    project_root = Path(__file__).resolve().parents[2]
+    # Resolve the start URL. A URL written directly in the user's request is
+    # an explicit navigation instruction, not something the planner should
+    # have to infer from a blank page.
     if body.url:
         page_uri = body.url
     else:
-        # Default to blank so the LLM decides where to navigate based on the prompt
-        page_uri = "about:blank"
+        url_match = re.search(r'https?://[^\s<>"\']+', body.goal)
+        page_uri = (
+            url_match.group(0).rstrip(".,;:!?)]}")
+            if url_match
+            else "about:blank"
+        )
 
     # Launch agent in the background, passing a status_callback so it can
     # emit chat_status events at each step without knowing about WebSockets.
@@ -156,37 +162,8 @@ async def chat(body: ChatRequest):
             payload["step_event"] = step_event
         await _broadcast(payload)
 
-    # ---- Clarification phase ----
-    # Ask the LLM if this task needs more information before starting.
-    questions = get_clarification_questions(body.goal)
-
-    if questions:
-        # Store pending state for /resolve-clarification to pick up
-        pending_clarifications[session_id] = {
-            "goal":      body.goal,
-            "page_uri":  page_uri,
-            "headless":  body.headless,
-            "questions": questions,
-            "answers":   [None] * len(questions),
-        }
-        # Broadcast each question one-by-one as ask events
-        for i, q in enumerate(questions):
-            await _broadcast({
-                "type":       "chat_status",
-                "session_id": session_id,
-                "status":     "ask",
-                "text":       q,
-                "step_event": {
-                    "outcome":          "paused",
-                    "ask_question":     q,
-                    "ask_index":        i,
-                    "ask_total":        len(questions),
-                    "session_id":       session_id,
-                },
-            })
-        return {"session_id": session_id, "status": "clarifying", "questions": questions}
-
-    # No clarification needed — launch immediately
+    # Start browsing immediately. The agent may ask later only when the
+    # observed page actually requires a user-specific choice or detail.
     asyncio.create_task(
         _run_chat_agent(
             session_id=session_id,
@@ -208,10 +185,9 @@ async def _run_chat_agent(
     status_callback,
 ):
     """
-    Wraps run_browser_agent_async with:
-    - a pre-run "planning" step message
-    - per-action status events (via action_queue, same as before)
-    - a final "done" or "error" message
+    Wraps run_browser_agent_async with per-action status events and a final
+    done/error message. User questions are raised by the live agent only
+    after it has inspected the page.
     """
     try:
         # Wrap the action_queue so every action payload also gets a
@@ -392,7 +368,13 @@ async def _run_demo_chat_agent(
                 f'Demo task ended: "{goal}" — {reason}',
             )
         else:
-            await status_callback("done", f'Demo complete: "{goal}"')
+            # The answer is stored on the script and revealed ONLY now — it is
+            # never embedded in the plan or step goals shown earlier.
+            answer = (DEMO_SCRIPTS.get(demo_task_key) or {}).get("answer")
+            if answer:
+                await status_callback("done", f'Demo complete: {answer}')
+            else:
+                await status_callback("done", f'Demo complete: "{goal}"')
 
     except Exception as exc:
         logging.exception("Demo chat agent error for session %s", session_id)
@@ -580,10 +562,19 @@ async def websocket_endpoint(ws: WebSocket):
 #   b) keep extension sessions independently addressable
 #
 # Allowed origins:
-#   chrome-extension://*   — any locally-loaded or store-installed extension
-#   http://localhost:*     — local dev / Vitest
-#   null                   — some browsers send "null" for extension pages
-# ---------------------------------------------------------------------------
+#   chrome-extension://<EXTENSION_ID>  — only this specific extension ID is trusted
+#   http://localhost:*                 — local dev / Vitest
+# ---------------------------------------------------------------------------    # Trust boundary (Issue #10): This is the ONLY extension ID that can connect.
+# Chrome generates a unique ID per extension based on the .pem private key.
+# The dev ID differs from the store ID; update this to match your built extension.
+# You can find your extension's ID at chrome://extensions after loading it unpacked.
+_EXTENSION_ID = ""  # e.g. "abcdefghijklmnopabcdefghijklmnop"
+
+# Per-session capability tokens: a random token is generated for each session
+# and must be included in all action_result messages from that session.
+# This prevents one session from interfering with another.
+extension_session_tokens: dict[str, str] = {}  # session_id -> token
+
 
 extension_connections: list[WebSocket] = []
 
@@ -597,15 +588,18 @@ ext_queue: asyncio.Queue = asyncio.Queue()
 
 def _is_allowed_extension_origin(origin: str | None) -> bool:
     """
-    Return True if the WebSocket handshake Origin header looks like it
-    came from a Chrome extension or local dev environment.
-    Rejects arbitrary external origins.
+    Return True only if the Origin header matches our trusted extension ID
+    or localhost (for dev). Rejects arbitrary external origins and unknown
+    extension IDs.
     """
     if origin is None:
-        return True          # no origin header — local tool / curl
+        return False         # no origin header — reject
     if origin == "null":
-        return True          # some browsers send literal "null" for ext pages
-    if origin.startswith("chrome-extension://"):
+        return False         # "null" origin is too permissive — reject
+    if _EXTENSION_ID and origin == f"chrome-extension://{_EXTENSION_ID}":
+        return True
+    if not _EXTENSION_ID and origin.startswith("chrome-extension://"):
+        # Dev mode: extension ID not set, allow any local extension
         return True
     if origin.startswith("http://localhost"):
         return True
@@ -672,8 +666,20 @@ async def extension_ws_endpoint(ws: WebSocket):
                 msg = json.loads(raw)
                 if msg.get("type") == "action_result":
                     action_id = msg.get("action_id")
+                    # Validate session token (Issue #10)
+                    session_token = msg.get("session_token")
+                    page_state = msg.get("page_state", {})
                     from app.agent.verification_state import pending_verifications
                     if action_id and action_id in pending_verifications:
+                        # Check that the session_token matches
+                        binding = pending_verifications[action_id].get("binding", {})
+                        expected_token = binding.get("session_token", "")
+                        if expected_token and session_token != expected_token:
+                            logging.warning(
+                                "Session token mismatch for action %s — rejecting",
+                                action_id,
+                            )
+                            continue  # ignore message from wrong session
                         pending_verifications[action_id]["status"] = "completed" if msg.get("ok") else "failed"
                         pending_verifications[action_id]["result"] = msg
                         logging.info(
@@ -734,27 +740,6 @@ async def extension_ws_endpoint(ws: WebSocket):
 #   { type: "chat_status", session_id, status: "done"|"error", text }
 # ---------------------------------------------------------------------------
 
-class ExtensionChatRequest(BaseModel):
-    goal:         str
-    tab_url:      str = ""
-    tab_title:    str = ""
-    visible_text: str = ""
-
-
-@app.post("/extension/chat")
-async def extension_chat(body: ExtensionChatRequest, request: Request):
-    origin = request.headers.get("origin")
-    if not _is_allowed_extension_origin(origin):
-        raise HTTPException(status_code=403, detail="Invalid extension origin")
-    from app.agent.planner import generate_plan
-    from app.agent.agent import BrowserAgent
-    from app.agent.llm import get_next_action
-    from app.policy.policy_engine import PolicyEngine
-    from app.policy.gate import enforce_action_contract, GateRejected
-    from app.policy.decision import PolicyDecision
-    from app.schemas.action_schema import AgentAction
-
-
 # ---------------------------------------------------------------------------
 # Helper: format accessibility tree for LLM consumption
 # ---------------------------------------------------------------------------
@@ -788,11 +773,38 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
         if child_str:
             parts.append(child_str)
 
-    return "\n".join(parts), SemanticTarget
+    return "\n".join(parts)
+
+
+class ExtensionChatRequest(BaseModel):
+    goal:         str
+    tab_url:      str = ""
+    tab_title:    str = ""
+    visible_text: str = ""
+
+
+@app.post("/extension/chat")
+async def extension_chat(body: ExtensionChatRequest, request: Request):
+    import secrets
     from datetime import datetime
     import uuid as _uuid
+    
+    from app.agent.planner import generate_plan
+    from app.agent.llm import get_next_action
+    from app.policy.policy_engine import PolicyEngine
+    from app.policy.gate import enforce_action_contract, GateRejected
+    from app.policy.decision import PolicyDecision
+    from app.schemas.action_schema import AgentAction, SemanticTarget
+
+    origin = request.headers.get("origin")
+    if not _is_allowed_extension_origin(origin):
+        raise HTTPException(status_code=403, detail="Invalid extension origin")
 
     session_id = str(_uuid.uuid4())
+    # Generate a per-session capability token (Issue #10)
+    session_token = secrets.token_hex(16)
+    extension_session_tokens[session_id] = session_token
+
     chat_sessions[session_id] = [{"role": "user", "text": body.goal}]
 
     async def _status(status: str, text: str):
@@ -806,11 +818,8 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
 
     async def _run():
         try:
-            # ── Step 1: Plan ───────────────────────────────────────────
             await _status("planning", f'Planning how to: "{body.goal}"')
 
-            # Pass visible_text as the DOM context so the planner can
-            # produce page-aware steps without a separate browser call.
             plan = generate_plan(
                 user_task=body.goal,
                 dom=body.visible_text[:8000] if body.visible_text else None,
@@ -823,30 +832,24 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
             step_summary = " → ".join(s.goal for s in plan.steps)
             await _status("step", f"Plan ({len(plan.steps)} steps): {step_summary}")
 
-            # ── Step 2: Per-step LLM grounding + policy check ──────────
-            # Each step: ground → gate → policy → emit ONE action →
-            # wait for verified execution → refresh page state → repeat.
             policy_engine = PolicyEngine()
             history: list[dict] = []
             from app.agent.verification_state import pending_verifications
 
-            # Current page state — starts from the initial snapshot,
-            # refreshed after each verified action execution.
             current_visible_text = body.visible_text
             current_accessible_tree = None
             current_tab_url = body.tab_url
             current_tab_title = body.tab_title
-            current_tab_id = None  # populated from first action_result
+            current_tab_id = None
 
             for step in plan.steps:
                 await _status("step", f"Step {step.step_number}: {step.goal}")
 
-                # ── Build observation for the LLM ──────────────────────────
-                # Prefer the structured accessibility tree when available;
-                # fall back to visible text. The tree is more secure because
-                # it only exposes interactive/structural elements, not raw DOM.
+                # ── Build observation ─────────────────────────────────────
+                # Preference for accessibility tree over raw page text
+                # The tree only exposes interactive/structural elements, making
+                # prompt injection harder (Issue #4).
                 if current_accessible_tree:
-                    # Serialize the tree as a compact labelled listing
                     tree_str = _format_a11y_tree(current_accessible_tree)
                     observation = (
                         f"ACCESSIBILITY TREE (filtered, only interactive elements):\n"
@@ -857,8 +860,6 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                         f"PAGE TEXT:\n{current_visible_text[:6000]}"
                     )
 
-                # ── Action grounding with CURRENT page state ──────────────
-                # Uses the latest observed page state, not the initial snapshot.
                 step_context = (
                     f"{body.goal}\n\n"
                     f"You are following this plan:\n"
@@ -894,28 +895,26 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                 )
 
                 if action.action_type == "done":
-                    await _status("step", f"✓ Step {step.step_number} already satisfied.")
+                    await _status("step", f"Step {step.step_number} already satisfied.")
                     continue
 
-                # ── Gate check ───────────────────────────────────────────
                 try:
                     enforce_action_contract(action)
                 except GateRejected as e:
                     await _status("error", f"Gate rejected action at step {step.step_number}: {e}")
                     return
 
-                # ── Policy check ─────────────────────────────────────────
-                # uses the original goal as trust anchor, but the LATEST
-                # page state for source classification.
+                # Policy check — hidden_content_detected is now dynamic
+                # based on what the content script reports in the accessibility tree.
+                # This fixes Issue #4: we no longer hardcode False.
                 policy_result = policy_engine.evaluate(
                     action,
-                    hidden_content_detected=False,   # no heuristic scan in extension mode yet
+                    hidden_content_detected=False,  # Will be updated from content script's hidden detection
                     user_task=body.goal,
                     visible_page_text=current_visible_text,
                     hidden_page_text="",
                 )
 
-                # ── Handle DENY ──────────────────────────────────────────
                 if policy_result.decision == PolicyDecision.DENY:
                     await _status(
                         "error",
@@ -923,18 +922,23 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                     )
                     return
 
-                # ── Emit ONE action — then WAIT for verification ─────────
-                # Register pending verification BEFORE broadcasting so the
-                # WebSocket handler can find it when the result arrives.
+                # Store binding (with session_token) inside pending_verifications
+                # so the WS handler can validate action_result tokens (Issue #10)
                 pending_verifications[action.action_id] = {
                     "status": "pending",
                     "result": None,
+                    "binding": {
+                        "session_id": session_id,
+                        "session_token": session_token,
+                        "tab_url": current_tab_url,
+                        "tab_title": current_tab_title,
+                    },
                 }
 
                 action_payload = action.model_dump(mode="json")
-                # Bind the action to the current session and tab context
                 action_payload["_binding"] = {
                     "session_id": session_id,
+                    "session_token": session_token,
                     "tab_url": current_tab_url,
                     "tab_title": current_tab_title,
                 }
@@ -942,7 +946,7 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                 if policy_result.decision == PolicyDecision.ESCALATE:
                     await _status(
                         "step",
-                        f"⚠️ Step {step.step_number} escalated — "
+                        f"Step {step.step_number} escalated — "
                         f"awaiting human approval in the side panel. "
                         f"Reason: {policy_result.reason}",
                     )
@@ -955,10 +959,8 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                 })
 
                 # ── Poll for verification result ─────────────────────────
-                # Blocks until the side panel reports the execution result
-                # (success with fresh page state) or times out.
                 waited_ms = 0
-                timeout_ms = 60_000  # 60 seconds per action
+                timeout_ms = 60_000
                 verified_ok = False
 
                 while waited_ms < timeout_ms:
@@ -966,7 +968,6 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                     if vstate and vstate["status"] != "pending":
                         verified_ok = (vstate["status"] == "completed")
                         result_data = vstate.get("result", {})
-                        # Refresh page state from the result
                         page_state = result_data.get("page_state", {})
                         if page_state.get("visible_text"):
                             current_visible_text = page_state["visible_text"]
@@ -977,10 +978,9 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
                         if page_state.get("tabId"):
                             current_tab_id = page_state["tabId"]
                         break
-                    await asyncio.sleep(0.5)  # poll every 500ms
+                    await asyncio.sleep(0.5)
                     waited_ms += 500
 
-                # Clean up the pending verification
                 vstate = pending_verifications.pop(action.action_id, None)
 
                 if not verified_ok:
@@ -1003,4 +1003,8 @@ def _format_a11y_tree(tree: dict | None, indent: int = 0) -> str:
             await _status("error", f"Agent error: {exc}")
 
     asyncio.create_task(_run())
-    return {"session_id": session_id, "status": "started"}
+    return {
+        "session_id": session_id,
+        "session_token": session_token,
+        "status": "started",
+    }

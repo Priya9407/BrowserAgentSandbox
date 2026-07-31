@@ -68,7 +68,11 @@ body { padding: 8px; }
   display:         flex;
   flex-direction:  column;
   height:          calc(100vh - 16px);
+  height:          calc(100dvh - 16px); /* dynamic viewport — mobile URL bar safe */
+  max-height:      calc(100vh - 16px);
+  max-height:      calc(100dvh - 16px);
   min-height:      calc(100vh - 16px);
+  min-height:      calc(100dvh - 16px);
   overflow:        hidden;
   border:          1px solid var(--border);
   border-radius:   var(--radius-lg);
@@ -237,6 +241,7 @@ body { padding: 8px; }
 /* ── Message thread — mirrors .chat-messages ─────────────── */
 .messages {
   flex:           1;
+  min-height:     0;   /* critical: allow shrink inside flex column */
   overflow-y:     auto;
   padding:        18px 16px;
   display:        flex;
@@ -321,6 +326,38 @@ body { padding: 8px; }
   0%, 80%, 100% { transform: translateY(0);    }
   40%           { transform: translateY(-6px); }
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Inline SVG icons: size from attrs, color from currentColor, aligned to text */
+.status-icon svg,
+.captcha-icon svg,
+.approval-icon svg,
+.ask-icon svg,
+.manual-icon svg,
+.tab-context-icon svg,
+.icon-btn svg {
+  display:      block;
+  flex-shrink:  0;
+}
+
+.status-icon,
+.captcha-icon,
+.approval-icon,
+.ask-icon,
+.manual-icon,
+.tab-context-icon,
+.icon-btn {
+  display:         inline-flex;
+  align-items:     center;
+  justify-content: center;
+  line-height:     1;
+}
+
+.spin { animation: spin 1s linear infinite; }
 
 /* ── CAPTCHA / pause banner — mirrors .captcha-banner ───── */
 .captcha-banner {
@@ -448,3 +485,226 @@ body { padding: 8px; }
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(225, 29, 72, 0.72); }
+
+/* ── Responsive (side panels can be resized narrow / short) ────── */
+@media (max-width: 420px) {
+  body { padding: 0; }
+  .panel {
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+    border-radius: 0;
+    border: none;
+  }
+  .panel-header { padding: 8px 12px; }
+  .panel-hero { padding: 6px 10px 8px; }
+  .messages { padding: 14px 12px; }
+  .input-bar { padding: 10px 10px 12px; }
+}
+
+@media (max-height: 500px) {
+  /* Short windows: tighten vertical rhythm so the input stays visible */
+  .panel-header { min-height: 48px; }
+  .panel-hero { padding: 4px 14px 6px; }
+  .messages { padding-top: 10px; }
+  .bubble, .status-line { padding: 8px 12px; }
+  .captcha-banner,
+  .approval-banner,
+  .ask-banner,
+  .manual-banner { padding: 8px 10px; }
+}
+
+/* ── Approval banner ────────────────────────────────────────────── */
+.approval-banner {
+  display:       flex;
+  align-items:   center;
+  flex-wrap:     wrap;
+  gap:           10px;
+  border:        1px solid rgba(255, 183, 3, 0.3);
+  background:    rgba(255, 183, 3, 0.08);
+  border-radius: var(--radius-md);
+  padding:       12px 14px;
+  margin:        0 16px 4px;
+  flex-shrink:   0;
+}
+
+.approval-banner.hidden { display: none; }
+.approval-icon { font-size: 16px; flex-shrink: 0; }
+
+.approval-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.approval-text {
+  font-size:   12px;
+  font-weight: 700;
+  color:       #ffd95f;
+}
+.approval-reason {
+  font-size:   11px;
+  color:       var(--text-muted);
+  line-height: 1.4;
+}
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.approval-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.approval-btn:hover { transform: translateY(-1px); }
+.approval-btn-approve {
+  background: var(--gradient);
+  color: #fff;
+}
+.approval-btn-approve:hover {
+  box-shadow: 0 8px 20px rgba(255, 79, 105, 0.3);
+}
+.approval-btn-deny {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.approval-btn-deny:hover {
+  color: var(--red);
+  border-color: var(--red);
+  box-shadow: 0 8px 20px rgba(255, 93, 170, 0.15);
+}
+
+/* ── Ask banner — agent needs user input ───────────────────────── */
+.ask-banner {
+  display:       flex;
+  align-items:   flex-start;
+  gap:           10px;
+  border:        1px solid rgba(56, 217, 169, 0.3);
+  background:    rgba(56, 217, 169, 0.06);
+  border-radius: var(--radius-md);
+  padding:       12px 14px;
+  margin:        0 16px 4px;
+  flex-shrink:   0;
+}
+.ask-banner.hidden { display: none; }
+.ask-icon { font-size: 16px; flex-shrink: 0; margin-top: 2px; }
+.ask-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ask-question {
+  font-size:   13px;
+  font-weight: 600;
+  color:       #eef2ff;
+  line-height: 1.4;
+}
+.ask-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ask-options.hidden { display: none; }
+.ask-option-btn {
+  border: 1px solid rgba(56, 217, 169, 0.3);
+  border-radius: 999px;
+  background: rgba(56, 217, 169, 0.08);
+  color: var(--green);
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ask-option-btn:hover {
+  background: rgba(56, 217, 169, 0.18);
+  transform: translateY(-1px);
+}
+.ask-option-btn.selected {
+  background: rgba(56, 217, 169, 0.25);
+  border-color: var(--green);
+}
+.ask-input-row {
+  display: flex;
+  gap: 8px;
+}
+.ask-input {
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 22px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  outline: none;
+  transition: border-color 0.18s;
+}
+.ask-input:focus { border-color: rgba(56, 217, 169, 0.6); }
+.ask-submit-btn {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--green);
+  color: #09070f;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.ask-submit-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(56, 217, 169, 0.3);
+}
+
+/* ── Manual interaction banner (login/payment/OTP) ────────────── */
+.manual-banner {
+  display:       flex;
+  align-items:   center;
+  flex-wrap:     wrap;
+  gap:           10px;
+  border:        1px solid rgba(255, 93, 170, 0.3);
+  background:    rgba(255, 93, 170, 0.08);
+  border-radius: var(--radius-md);
+  padding:       12px 14px;
+  margin:        0 16px 4px;
+  flex-shrink:   0;
+}
+.manual-banner.hidden { display: none; }
+.manual-icon { font-size: 16px; flex-shrink: 0; }
+.manual-text {
+  flex: 1;
+  font-size:   12px;
+  font-weight: 600;
+  color:       #eef2ff;
+  min-width:   0;
+}
+.manual-resume-btn {
+  flex-shrink:   0;
+  border:        none;
+  border-radius: 999px;
+  background:    linear-gradient(135deg, rgba(255, 93, 170, 0.9), rgba(255, 45, 74, 0.9));
+  color:         #fff;
+  font-size:     12px;
+  font-weight:   800;
+  padding:       8px 16px;
+  cursor:        pointer;
+  transition:    transform 0.18s ease, box-shadow 0.18s ease;
+}
+.manual-resume-btn:hover {
+  transform:  translateY(-1px);
+  box-shadow: 0 8px 20px rgba(255, 45, 74, 0.25);
+}

@@ -1,3 +1,5 @@
+import { AlertTriangle, EyeOff } from "lucide-react";
+
 export default function Provenance({ item }) {
   if (!item) {
     return (
@@ -42,13 +44,14 @@ export default function Provenance({ item }) {
         </p>
         {policy.hidden_content_detected && (
           <p className="hidden-flag">
-            ⚠ This instruction originated from hidden page content, not the
-            user's request.
+            <EyeOff size={12} /> This instruction originated from hidden page
+            content, not the user's request.
           </p>
         )}
         {policy.topic_drift_detected && (
           <p className="hidden-flag">
-            ⚠ Semantic Topic Drift Detected: The agent's reasoning was unrelated to the user's task.
+            <AlertTriangle size={12} /> Semantic Topic Drift Detected: The
+            agent's reasoning was unrelated to the user's task.
           </p>
         )}
       </section>

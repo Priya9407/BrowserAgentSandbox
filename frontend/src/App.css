@@ -1,6 +1,6 @@
 /* =========================================================
    App.css — Frontier Browser Agent Sandbox
-   Dark neon 3D UI with animated glass panels and interactive cursor
+   Dark neon 3D UI with animated glass panels
    ========================================================= */
 
 /* ---------------------------------------------------------
@@ -45,7 +45,6 @@ body {
               radial-gradient(circle at bottom right, rgba(255, 90, 165, 0.12), transparent 20%),
               linear-gradient(180deg, #100618 0%, #050308 100%);
   color: var(--text);
-  cursor: none;
   overflow-x: hidden;
 }
 
@@ -61,10 +60,19 @@ body {
    --------------------------------------------------------- */
 .app {
   position: relative;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh; /* dynamic viewport — mobile URL bar safe */
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Landing view — the page scrolls naturally, no inner scrolling */
+.app.view-landing {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-y: auto;
 }
 
 .app::before {
@@ -104,18 +112,32 @@ body {
     background:rgba(8,12,22,.55);
 }
 
-.header-brand {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
 .brand-shield{
     width:72px;
     height:72px;
     display:flex;
     align-items:center;
     justify-content:center;
+}
+
+/* Brand as a home button — resets button chrome, keeps flex layout */
+.brand-home-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+
+.brand-home-btn .brand-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .brand-logo{
@@ -169,7 +191,6 @@ body {
   font-size: 13px;
   font-weight: 700;
   transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
-  cursor: none;
 }
 
 .nav-btn:hover {
@@ -211,6 +232,31 @@ body {
     box-shadow:0 0 12px #ef4444;
 }
 
+@keyframes spin{
+  from{ transform: rotate(0deg); }
+  to{ transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Icon + text inside buttons / flags — align SVGs with labels */
+.chat-clear-btn,
+.chat-url-toggle,
+.chat-send-btn,
+.approval-controls button,
+.action-item .hidden-flag,
+.prov-section .hidden-flag,
+.nav-btn,
+.start-chat-btn,
+.tl-replan-badge {
+  display:         inline-flex;
+  align-items:     center;
+  justify-content: center;
+  gap:             6px;
+}
+
 @keyframes pulse{
 
 0%{
@@ -232,13 +278,23 @@ opacity:.6;
 /* ---------------------------------------------------------
    Two-column body
    --------------------------------------------------------- */
+.landing-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  padding: 20px 32px 40px;
+}
+
 .hero-section {
   display: flex;
   justify-content: center;
-  padding: 30px 32px 20px;
+  align-items: center;
+  padding: 24px 0 8px;
   position: relative;
   z-index: 1;
   overflow: hidden;
+  width: 100%;
 }
 
 .hero-section::after {
@@ -334,6 +390,12 @@ opacity:.6;
   transition: transform 0.22s ease, border-color 0.22s ease, background 0.22s ease;
 }
 
+.hero-card-icon {
+  display: block;
+  font-size: 22px;
+  margin-bottom: 10px;
+}
+
 .hero-card:hover {
   transform: translateY(-5px);
   border-color: rgba(255, 45, 74, 0.45);
@@ -354,14 +416,56 @@ opacity:.6;
   line-height: 1.72;
 }
 
+/* ── Hero CTA ─────────────────────────────────────────────── */
+.hero-cta {
+  margin-top: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.start-chat-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 16px 44px;
+  font-size: 16px;
+  font-weight: 800;
+  font-family: inherit;
+  color: white;
+  background: linear-gradient(135deg, #E11D48 0%, #F43F5E 60%, #FF6FAF 100%);
+  box-shadow: 0 14px 40px rgba(255, 45, 74, 0.35);
+  cursor: pointer;
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+  white-space: nowrap;
+}
+
+.start-chat-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 22px 60px rgba(255, 79, 105, 0.5);
+}
+
+.start-chat-btn:active {
+  transform: translateY(-1px);
+}
+
+.hero-cta-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
 .app-body{
     display:grid;
-    grid-template-columns:1fr 390px;
+    grid-template-columns:minmax(0, 1fr) 390px;
+    grid-template-rows:minmax(0, 1fr);
     gap:22px;
 
     padding:0 32px 28px;
 
     flex:1;
+    min-height:0;
     align-items:stretch;
 }
 
@@ -376,16 +480,19 @@ opacity:.6;
     display:flex;
     flex-direction:column;
     gap:18px;
-    height:78vh;
+    height:100%;
+    min-height:0;
 }
 
 .col-side > :first-child{
-    flex:0 0 52%;
+    flex:1 1 52%;
+    min-height:0;
     overflow-y:auto;
 }
 
 .col-side > :last-child{
-    flex:0 0 46%;
+    flex:1 1 46%;
+    min-height:0;
     overflow-y:auto;
 }
 
@@ -543,13 +650,6 @@ opacity:.6;
   gap: 10px;
 }
 
-.approval-controls button,
-.captcha-resume-btn,
-.chat-clear-btn,
-.nav-btn {
-  cursor: none;
-}
-
 /* ---------------------------------------------------------
    Provenance panel
    --------------------------------------------------------- */
@@ -592,8 +692,8 @@ opacity:.6;
 .chat-panel{
     display:flex;
     flex-direction:column;
-    height:78vh;
-    min-height:600px;
+    flex:1;
+    min-height:0;
 }
 
 .chat-header {
@@ -621,7 +721,6 @@ opacity:.6;
   font-weight: 700;
   color: var(--text-muted);
   padding: 10px 16px;
-  cursor: none;
   transition: border-color 0.18s, transform 0.18s;
 }
 
@@ -676,7 +775,6 @@ opacity:.6;
   font-size: 13px;
   font-weight: 700;
   color: #ede9fe;
-  cursor: none;
   transition: transform 0.18s ease, background 0.18s ease;
 }
 
@@ -796,7 +894,6 @@ opacity:.6;
   width: 38px;
   height: 38px;
   font-size: 16px;
-  cursor: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -834,7 +931,6 @@ opacity:.6;
   font-size: 14px;
   font-weight: 800;
   color: white;
-  cursor: none;
   align-self: flex-end;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
   white-space: nowrap;
@@ -931,7 +1027,6 @@ opacity:.6;
   font-size: 12px;
   font-weight: 800;
   padding: 10px 18px;
-  cursor: none;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -1120,66 +1215,120 @@ opacity:.6;
 }
 
 /* ---------------------------------------------------------
-   Cursor visuals
-   --------------------------------------------------------- */
-.cursor-dot,
-.cursor-trail {
-  position: fixed;
-  top: 0;
-  left: 0;
-  pointer-events: none;
-  z-index: 9999;
-  mix-blend-mode: screen;
-}
-
-.cursor-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08),
-              0 0 18px rgba(255, 79, 105, 0.45),
-              0 0 28px rgba(255, 45, 74, 0.2);
-  transition: transform 0.16s ease, width 0.16s ease, height 0.16s ease;
-}
-
-.cursor-trail {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 0 40px rgba(255, 45, 74, 0.22);
-}
-
-.cursor-hover.cursor-dot {
-  transform: scale(1.8);
-  background: rgba(255, 255, 255, 1);
-}
-
-.cursor-hover.cursor-trail {
-  transform: scale(1.05);
-  border-color: rgba(255, 79, 105, 0.45);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-/* ---------------------------------------------------------
    Responsive
    --------------------------------------------------------- */
-@media (max-width: 860px) {
+@media (max-width: 1100px) {
   .app-body {
+    grid-template-columns: minmax(0, 1fr) 330px;
+    padding: 0 20px 20px;
+  }
+
+  .brand-name {
+    font-size: 17px;
+  }
+
+  .hero-subtitle {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-header {
+    padding: 8px 16px;
+  }
+
+  .brand-shield {
+    width: 48px;
+    height: 48px;
+  }
+
+  .brand-name {
+    font-size: 14px;
+  }
+
+  .brand-name i {
+    display: none; /* drop the tagline on tiny screens */
+  }
+
+  /* Chat view stacks into a single column */
+  .app.view-chat {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+
+  .app.view-chat .app-body {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
     overflow: visible;
-    padding: 16px 20px 24px;
+    padding: 12px 14px 20px;
   }
 
   .col-chat {
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    height: 60vh;
+    height: 62vh;
+    min-height: 420px;
   }
 
   .col-side {
     padding: 0;
+    height: auto;
+    min-height: 0;
+  }
+
+  .col-side > :first-child,
+  .col-side > :last-child {
+    flex: none;
+    height: 40vh;
+    min-height: 300px;
+  }
+
+  /* Landing view */
+  .landing-body {
+    padding: 12px 16px 28px;
+  }
+
+  .hero-features {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-title {
+    font-size: clamp(40px, 9vw, 64px);
+  }
+
+  .hero-cta {
+    margin-top: 28px;
+  }
+
+  .start-chat-btn {
+    padding: 14px 36px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .hero-title {
+    font-size: clamp(32px, 11vw, 44px);
+  }
+
+  .hero-subtitle {
+    font-size: 15px;
+    line-height: 1.7;
+  }
+
+  .start-chat-btn {
+    width: 100%;
+    max-width: 320px;
+  }
+
+  .col-chat {
+    height: 60vh;
+    min-height: 380px;
+  }
+
+  .chat-input-row {
+    padding: 12px;
   }
 }

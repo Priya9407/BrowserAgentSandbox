@@ -56,12 +56,13 @@ from app.aws.s3_client import upload_screenshot
 from app.agent.playwright_agent import semantic_find, _execute
 
 # Delay between steps — purely for visible animation pacing in the UI
-STEP_DELAY_S = 0.55   # 550 ms — sits comfortably between 400 and 800 ms
+STEP_DELAY_S = 0.55  # 550 ms — sits comfortably between 400 and 800 ms
 
 
 # ---------------------------------------------------------------------------
 # Async entry point — called from main.py via asyncio.create_task()
 # ---------------------------------------------------------------------------
+
 
 async def run_demo_agent_async(
     queue: asyncio.Queue,
@@ -90,6 +91,7 @@ async def run_demo_agent_async(
 # Sync runner — executes in a thread pool worker
 # ---------------------------------------------------------------------------
 
+
 def run_demo_agent(
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
@@ -103,14 +105,13 @@ def run_demo_agent(
     script = DEMO_SCRIPTS.get(demo_task_key)
     if script is None:
         raise ValueError(
-            f"Unknown demo_task_key {demo_task_key!r}. "
-            f"Valid keys: {list(DEMO_SCRIPTS)}"
+            f"Unknown demo_task_key {demo_task_key!r}. Valid keys: {list(DEMO_SCRIPTS)}"
         )
 
-    steps      = script["steps"]
-    page_uri   = script["page_uri"]
-    user_task  = script["goal"]
-    total      = len(steps)
+    steps = script["steps"]
+    page_uri = script["page_uri"]
+    user_task = script["goal"]
+    total = len(steps)
 
     # ── _emit helper — mirrors playwright_agent._emit ────────────────────────
     def _emit(status: str, text: str, step_event: dict | None = None):
@@ -120,12 +121,12 @@ def run_demo_agent(
             )
 
     # ── Tracing ──────────────────────────────────────────────────────────────
-    trace_seg   = tracer.start_segment(
+    trace_seg = tracer.start_segment(
         "demo_task", trace_id=trace_id, user_task=user_task
     )
     _task_start = _time.time()
     _success_count = 0
-    _fail_count    = 0
+    _fail_count = 0
 
     # ── Build a synthetic TaskPlan so step events match the real UI shape ────
     plan = TaskPlan(
@@ -140,19 +141,22 @@ def run_demo_agent(
         ],
     )
 
-    _emit("step", f"Demo mode — plan ready ({total} steps): "
-          + " → ".join(s["goal"] for s in steps))
+    _emit(
+        "step",
+        f"Demo mode — plan ready ({total} steps): "
+        + " → ".join(s["goal"] for s in steps),
+    )
 
     detector = HiddenContentDetector()
-    policy   = PolicyEngine()
+    policy = PolicyEngine()
 
     # Final outcome — flipped to "done" only on clean completion
-    task_outcome        = "error"
+    task_outcome = "error"
     task_outcome_reason = "Demo task ended before completion."
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless, slow_mo=0)
-        page    = browser.new_page()
+        page = browser.new_page()
         page.set_viewport_size({"width": 1280, "height": 900})
 
         # Navigate to starting page immediately (before the step loop)
@@ -163,7 +167,7 @@ def run_demo_agent(
         # Step loop
         # ================================================================
         for step_idx, step_spec in enumerate(steps):
-            step_num  = step_idx + 1
+            step_num = step_idx + 1
             step_goal = step_spec["goal"]
 
             # ── Pacing delay (skip for first step — navigate is instant) ──
@@ -174,21 +178,18 @@ def run_demo_agent(
             step_evt_running = {
                 "step_number": step_num,
                 "total_steps": total,
-                "goal":        step_goal,
-                "outcome":     "running",
-                "retry":       0,
+                "goal": step_goal,
+                "outcome": "running",
+                "retry": 0,
             }
             _emit("step", f"Step {step_num}/{total}: {step_goal}", step_evt_running)
 
             # ── Detect hidden content on the current page ─────────────────
-            hidden_result   = detector.detect(page)
-            hidden_found    = hidden_result.get("hidden_found", False)
-            visible_text: str = page.evaluate(
-                "() => document.body.innerText || ''"
-            )
+            hidden_result = detector.detect(page)
+            hidden_found = hidden_result.get("hidden_found", False)
+            visible_text: str = page.evaluate("() => document.body.innerText || ''")
             hidden_text: str = " ".join(
-                el.get("text", "") or ""
-                for el in hidden_result.get("elements", [])
+                el.get("text", "") or "" for el in hidden_result.get("elements", [])
             )
 
             # ── Build AgentAction from the script spec ─────────────────────
@@ -200,7 +201,9 @@ def run_demo_agent(
             # swapping target to the bare filename during policy evaluation,
             # then restoring the real URI for _execute().
             raw_target = step_spec["target"]
-            if step_spec["action_type"] == "navigate" and raw_target.startswith("file://"):
+            if step_spec["action_type"] == "navigate" and raw_target.startswith(
+                "file://"
+            ):
                 # e.g. "file:///…/testshopping.html" → "testshopping.html"
                 classifier_target = Path(raw_target.replace("file:///", "")).name
             else:
@@ -209,7 +212,7 @@ def run_demo_agent(
             action = AgentAction(
                 action_id=str(uuid.uuid4()),
                 action_type=step_spec["action_type"],
-                target=raw_target,          # real URI — gate needs non-empty
+                target=raw_target,  # real URI — gate needs non-empty
                 semantic_target=SemanticTarget(
                     role=step_spec.get("semantic_role", "generic"),
                     label=step_spec.get("semantic_label", ""),
@@ -232,7 +235,7 @@ def run_demo_agent(
                 trace_seg.finish_subsegment(_gate_sub, error=str(e))
                 _emit("error", f"Gate rejected demo action at step {step_num}: {e}")
                 _fail_count += 1
-                task_outcome        = "error"
+                task_outcome = "error"
                 task_outcome_reason = f"Gate rejected action: {e}"
                 break
 
@@ -240,11 +243,9 @@ def run_demo_agent(
             # Temporarily swap to the classifier-safe target (bare filename)
             # so the RiskClassifier's combined-text check doesn't see the
             # "browse" substring in the file:// URI.  Restore immediately after.
-            _saved_target  = action.target
-            action.target  = classifier_target
-            _policy_sub = trace_seg.start_subsegment(
-                "policy.evaluate", step=step_num
-            )
+            _saved_target = action.target
+            action.target = classifier_target
+            _policy_sub = trace_seg.start_subsegment("policy.evaluate", step=step_num)
             result = policy.evaluate(
                 action,
                 hidden_content_detected=hidden_found,
@@ -253,7 +254,7 @@ def run_demo_agent(
                 hidden_page_text=hidden_text,
             )
             trace_seg.finish_subsegment(_policy_sub)
-            action.target = _saved_target   # restore real URI for _execute()
+            action.target = _saved_target  # restore real URI for _execute()
 
             print(
                 f"[demo_runner] step {step_num} "
@@ -263,13 +264,29 @@ def run_demo_agent(
                 f"hidden={hidden_found}"
             )
 
+            # Demo mode is deliberately human-in-the-loop. Even actions that
+            # policy marks ALLOW wait for the reviewer unless Auto-Approve Low
+            # Risks was explicitly enabled in the Action Feed.
+            from app.agent.escalation_state import (
+                auto_approve_low_unknown,
+                pending_escalations,
+            )
+            manual_approval_required = (
+                result.decision == PolicyDecision.ALLOW
+                and result.risk_level in ("LOW", "UNKNOWN")
+                and not auto_approve_low_unknown
+            )
+            if manual_approval_required:
+                pending_escalations[action.action_id] = "pending"
+
             # ── Push action + policy to WebSocket dashboard (ActionFeed) ──
             if queue is not None and loop is not None:
                 payload = {
-                    "type":       "action",
+                    "type": "action",
                     "session_id": trace_id,
-                    "action":     action.model_dump(mode="json"),
-                    "policy":     result.model_dump(mode="json"),
+                    "action": action.model_dump(mode="json"),
+                    "policy": result.model_dump(mode="json"),
+                    "execution_requires_approval": manual_approval_required,
                 }
                 asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
 
@@ -281,9 +298,10 @@ def run_demo_agent(
                 )
 
             # ── Execute / escalate / deny ─────────────────────────────────
-            if result.decision == PolicyDecision.ALLOW:
+            if result.decision == PolicyDecision.ALLOW and not manual_approval_required:
                 _exec_sub = trace_seg.start_subsegment(
-                    "browser.execute_action", step=step_num,
+                    "browser.execute_action",
+                    step=step_num,
                     action_type=action.action_type,
                 )
                 try:
@@ -293,13 +311,13 @@ def run_demo_agent(
                     _success_count += 1
                     _emit(
                         "step",
-                        f"✓ Step {step_num}/{total}: {step_goal}",
+                        f"Step {step_num}/{total}: {step_goal}",
                         {
                             "step_number": step_num,
                             "total_steps": total,
-                            "goal":        step_goal,
-                            "outcome":     "success",
-                            "retry":       0,
+                            "goal": step_goal,
+                            "outcome": "success",
+                            "retry": 0,
                         },
                     )
                 except Exception as exc:
@@ -307,46 +325,43 @@ def run_demo_agent(
                     _fail_count += 1
                     _emit(
                         "step",
-                        f"✗ Step {step_num} execution failed: {exc}",
+                        f"Step {step_num} execution failed: {exc}",
                         {
                             "step_number": step_num,
                             "total_steps": total,
-                            "goal":        step_goal,
-                            "outcome":     "failed",
-                            "retry":       0,
+                            "goal": step_goal,
+                            "outcome": "failed",
+                            "retry": 0,
                         },
                     )
-                    task_outcome        = "error"
+                    task_outcome = "error"
                     task_outcome_reason = f"Step {step_num} execution failed: {exc}"
                     break
 
-            elif result.decision == PolicyDecision.ESCALATE:
+            elif result.decision == PolicyDecision.ESCALATE or manual_approval_required:
                 # ── Human approval gate ────────────────────────────────────
                 from app.agent.escalation_state import pending_escalations
 
                 pending_escalations[action.action_id] = "pending"
-
                 _emit(
                     "step",
                     (
-                        f"⏸ Step {step_num} escalated — awaiting human approval. "
+                        f"Step {step_num} awaiting your approval. "
                         f"Reason: {result.reason}"
                     ),
                     {
                         "step_number": step_num,
                         "total_steps": total,
-                        "goal":        step_goal,
-                        "outcome":     "paused",
-                        "retry":       0,
+                        "goal": step_goal,
+                        "outcome": "paused",
+                        "retry": 0,
                     },
                 )
-                print(
-                    f"[demo_runner] waiting for human approval on {action.action_id}"
-                )
+                print(f"[demo_runner] waiting for human approval on {action.action_id}")
 
                 # Poll until the human resolves the escalation
-                waited_ms   = 0
-                timeout_ms  = 10 * 60 * 1000  # 10 minute safety ceiling
+                waited_ms = 0
+                timeout_ms = 10 * 60 * 1000  # 10 minute safety ceiling
                 while (
                     pending_escalations.get(action.action_id) == "pending"
                     and waited_ms < timeout_ms
@@ -359,17 +374,18 @@ def run_demo_agent(
                 if decision_ui == "approved":
                     _emit(
                         "step",
-                        f"▶ Human approved step {step_num} — executing…",
+                        f"Human approved step {step_num} — executing…",
                         {
                             "step_number": step_num,
                             "total_steps": total,
-                            "goal":        step_goal,
-                            "outcome":     "running",
-                            "retry":       0,
+                            "goal": step_goal,
+                            "outcome": "running",
+                            "retry": 0,
                         },
                     )
                     _exec_sub = trace_seg.start_subsegment(
-                        "browser.execute_action.approved", step=step_num,
+                        "browser.execute_action.approved",
+                        step=step_num,
                         action_type=action.action_type,
                     )
                     try:
@@ -379,13 +395,13 @@ def run_demo_agent(
                         _success_count += 1
                         _emit(
                             "step",
-                            f"✓ Step {step_num}/{total}: {step_goal}",
+                            f"Step {step_num}/{total}: {step_goal}",
                             {
                                 "step_number": step_num,
                                 "total_steps": total,
-                                "goal":        step_goal,
-                                "outcome":     "success",
-                                "retry":       0,
+                                "goal": step_goal,
+                                "outcome": "success",
+                                "retry": 0,
                             },
                         )
                     except Exception as exc:
@@ -393,16 +409,16 @@ def run_demo_agent(
                         _fail_count += 1
                         _emit(
                             "step",
-                            f"✗ Step {step_num} failed after approval: {exc}",
+                            f"Step {step_num} failed after approval: {exc}",
                             {
                                 "step_number": step_num,
                                 "total_steps": total,
-                                "goal":        step_goal,
-                                "outcome":     "failed",
-                                "retry":       0,
+                                "goal": step_goal,
+                                "outcome": "failed",
+                                "retry": 0,
                             },
                         )
-                        task_outcome        = "error"
+                        task_outcome = "error"
                         task_outcome_reason = (
                             f"Step {step_num} failed after human approval: {exc}"
                         )
@@ -411,17 +427,17 @@ def run_demo_agent(
                     # Human denied — skip this step and stop the run
                     _emit(
                         "step",
-                        f"✗ Human denied step {step_num} — task stopped.",
+                        f"Human denied step {step_num} — task stopped.",
                         {
                             "step_number": step_num,
                             "total_steps": total,
-                            "goal":        step_goal,
-                            "outcome":     "skipped",
-                            "retry":       0,
+                            "goal": step_goal,
+                            "outcome": "skipped",
+                            "retry": 0,
                         },
                     )
                     _fail_count += 1
-                    task_outcome        = "error"
+                    task_outcome = "error"
                     task_outcome_reason = (
                         f"Human denied escalated action at step {step_num}."
                     )
@@ -430,31 +446,30 @@ def run_demo_agent(
             else:  # DENY
                 _emit(
                     "step",
-                    f"✗ Step {step_num} blocked by policy: {result.reason}",
+                    f"Step {step_num} blocked by policy: {result.reason}",
                     {
                         "step_number": step_num,
                         "total_steps": total,
-                        "goal":        step_goal,
-                        "outcome":     "failed",
-                        "retry":       0,
+                        "goal": step_goal,
+                        "outcome": "failed",
+                        "retry": 0,
                     },
                 )
                 _fail_count += 1
-                task_outcome        = "error"
+                task_outcome = "error"
                 task_outcome_reason = f"Blocked by policy: {result.reason}"
                 break
 
         else:
             # for…else fires when the loop completed without a break
-            task_outcome        = "done"
+            task_outcome = "done"
             task_outcome_reason = None
 
         # ── Screenshot ───────────────────────────────────────────────────────
         page.wait_for_timeout(1000)
         try:
             screenshot_dir = (
-                Path(__file__).resolve().parents[3]
-                / "backend" / "logs" / "screenshots"
+                Path(__file__).resolve().parents[3] / "backend" / "logs" / "screenshots"
             )
             screenshot_dir.mkdir(parents=True, exist_ok=True)
             screenshot_path = screenshot_dir / f"{trace_seg.trace_id}.png"
@@ -478,10 +493,10 @@ def run_demo_agent(
     tracer.finish_segment(trace_seg)
 
     return {
-        "status":          task_outcome,
-        "reason":          task_outcome_reason,
-        "trace_id":        trace_seg.trace_id,
-        "success_count":   _success_count,
-        "fail_count":      _fail_count,
+        "status": task_outcome,
+        "reason": task_outcome_reason,
+        "trace_id": trace_seg.trace_id,
+        "success_count": _success_count,
+        "fail_count": _fail_count,
         "elapsed_seconds": round(_time.time() - _task_start, 2),
     }
