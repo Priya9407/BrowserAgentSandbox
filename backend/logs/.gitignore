@@ -1,0 +1,10 @@
+# ── Logs directory ──────────────────────────────────────────────────────────
+# This directory may contain screenshots, traces, and logs from agent runs.
+# These files can contain sensitive user data (credentials, payment info,
+# booking details, addresses, phone numbers, etc.).
+
+# Ignore everything by default
+*
+
+# Optional: keep the .gitignore itself
+!.gitignore

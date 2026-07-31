@@ -118,19 +118,36 @@ IMPORTANT RULES:
 - If the CURRENT STEP (or the whole task, if no plan was given) is already
   satisfied based on the HTML, return action_type = "done".
 - `target` MUST be a valid CSS selector that exists in the HTML.
+  IMPORTANT: PREFER interactive elements (button, input, a, form) over decorative
+  children (svg, span, img, path, i, icon). If you target a button, use
+  the button itself, not its inner SVG or icon span.
 - `semantic_target` MUST describe the element in plain terms so Playwright
   can find it by role and visible text if the CSS selector fails.
   Provide `role` (one of: button, link, textbox, combobox, checkbox,
   radio, listbox, menuitem, heading, img, searchbox, or "generic") and
   `label` (the element's visible text, placeholder, or aria-label).
+  The `label` MUST be visible text on screen — never use empty labels or
+  icon-only descriptions.
 - `value` is required when action_type is "fill" or "type". If action_type is "done" and you found an answer to the user's question, put the final answer in `value`. Omit `value` otherwise.
-- 🛑 DO NOT GUESS PASSWORDS! If the current step requires a password or 2FA code that you were not explicitly given, you MUST return action_type = "ask" and put your question in the `value` field.
-- If you encounter a quiz question, do NOT ask the user; answer it yourself using your own internal knowledge.
+- NEVER GUESS PASSWORDS! If the current step requires a password or 2FA code that you were not explicitly given, you MUST return action_type = "ask" and put your question in the `value` field.
+- NEVER GUESS PAYMENT DETAILS (credit card numbers, UPI IDs, CVV, etc.)! If the current step requires payment information that you were not given, you MUST return action_type = "ask" and put your question in the `value` field.
+- NEVER GUESS PERSONAL DETAILS (delivery address, phone number, name)! If the checkout requires personal information you were not given, use action_type="ask" to request it from the user.
+- QUIZ RULE: If the visible page contains a quiz/trivia question and answer
+  choices, use the question and choices in the HTML to reason out the answer
+  yourself, then return a click action for exactly one visible answer choice.
+  Do NOT ask the user what answer to submit, what payment method they prefer,
+  or for any other invented quiz prerequisite. After an answer is selected,
+  return the visible Next, Continue, Submit, or Finish action.
+- Use action_type="ask" only when the currently visible page genuinely requires
+  information that is personal to this user and cannot be inferred from the
+  task or page (for example a delivery address, a real account login, or a
+  user preference that changes the outcome). Never turn a quiz question into
+  an ask action.
 - reasoning MUST explain why this specific action moves the task forward.
 - cited_source_text MUST be the exact visible text that justified this action.
 - cited_source_location MUST be a CSS selector pointing to that text's element.
 
-🎯 OPTIONS (user choice / multi-site results):
+OPTIONS (user choice / multi-site results):
 When you find multiple results from different sources (e.g. prices from different websites),
 use action_type="ask" with an `options` array containing each choice as a string.
 The user will click one, and you'll receive their choice to proceed.
@@ -197,6 +214,37 @@ Return a JSON object with EXACTLY these keys:
     print("============================\n")
 
     return result
+
+
+def solve_multiple_choice_quiz(questions: list[dict]) -> list[str]:
+    """Ask the LLM for one answer to each visible multiple-choice question.
+
+    This intentionally uses one request for an entire static quiz rather than
+    repeatedly planning/clicking/re-planning between questions. The browser
+    layer still validates each returned answer against the options rendered on
+    the page before it clicks anything.
+    """
+    prompt = f"""
+Answer this multiple-choice quiz. For every question, choose exactly one of
+the supplied options using general knowledge. Return JSON only:
+
+{{"answers": ["exact option text for question 1", "exact option text for question 2"]}}
+
+QUESTIONS:
+{json.dumps(questions, ensure_ascii=False)}
+"""
+    try:
+        response = client.chat.completions.create(
+            model="meta/llama-3.1-8b-instruct",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        answers = json.loads(response.choices[0].message.content).get("answers", [])
+        return [answer.strip() for answer in answers if isinstance(answer, str)]
+    except Exception as exc:
+        print(f"[Quiz solver] LLM error: {exc}")
+        return []
 
 
 # ---------------------------------------------------------------------------

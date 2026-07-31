@@ -76,6 +76,9 @@ class RiskClassifier:
 
         # --------------------------
         # CREDENTIAL  (login, password, token)
+        # "email" alone is intentionally NOT a credential — contact forms
+        # and signup boxes on normal pages contain email fields everywhere,
+        # which caused false-positive escalations on everyday pages.
         # --------------------------
 
         credential_keywords = [
@@ -86,7 +89,6 @@ class RiskClassifier:
             "otp",
             "credential",
             "username",
-            "email",
             "api key",
             "token",
         ]
@@ -98,6 +100,12 @@ class RiskClassifier:
         # SEND  (send, email, message, share, publish)
         # Check BEFORE download so "send file" patterns are caught
         # as SEND rather than DOWNLOAD.
+        #
+        # ⚠️ False-positive guard: normal conversation pages (chats, social
+        # feeds, forums) have "Send", "Message", "Share" and "Publish"
+        # buttons everywhere. Only classify as SEND when the action is an
+        # actual CLICK on a send-like control — typing in a message box or
+        # navigating to a message page is not itself a send.
         # --------------------------
 
         send_keywords = [
@@ -108,7 +116,7 @@ class RiskClassifier:
             "publish",
         ]
 
-        if any(word in combined for word in send_keywords):
+        if action.action_type == "click" and any(word in combined for word in send_keywords):
             return RiskCategory.SEND
 
         # --------------------------

@@ -66,6 +66,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true; // keep channel open for async response
     }
 
+    // ── GET_PAGE_STATE — returns visible_text + accessibility_tree + url ───
+    case "GET_PAGE_STATE": {
+      _getActiveTab().then(tab => {
+        if (!tab) return sendResponse({ error: "No active tab" });
+
+        chrome.tabs.sendMessage(
+          tab.id,
+          { type: "GET_VISIBLE_TEXT" },
+          (textResult) => {
+            const visibleText = textResult?.text ?? "";
+            // Also ask for full page state including a11y tree
+            chrome.tabs.sendMessage(
+              tab.id,
+              { type: "GET_PAGE_STATE" },
+              (stateResult) => {
+                sendResponse({
+                  url:              tab.url ?? "",
+                  title:            tab.title ?? "",
+                  visible_text:     stateResult?.page_state?.visible_text || visibleText,
+                  accessibility_tree: stateResult?.page_state?.accessibility_tree || null,
+                  tabId:            tab.id,
+                });
+              }
+            );
+          }
+        );
+      });
+      return true;
+    }
+
     // ── EXECUTE_ACTION ─────────────────────────────────────────────────────
     case "EXECUTE_ACTION": {
       const { action } = msg;
@@ -116,13 +146,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
 
       sendResponse({ ok: true });
-      return false;
-    }
-
-    // ── ACTION_RESULT (from content script, forward to side panel) ─────────
-    case "ACTION_RESULT": {
-      // Side panel listens via its own onMessage — just echo it back.
-      chrome.runtime.sendMessage({ ...msg });
       return false;
     }
 

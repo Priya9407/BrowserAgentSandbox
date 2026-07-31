@@ -117,8 +117,26 @@ class BrowserAgent:
     def think(self, dom: str) -> AgentAction:
         self.step_count += 1
 
+        # Quiz controls change state after every answer. A high-level plan can
+        # easily become stale (for example, it may still say "click Next"
+        # while the visible page is asking for the next answer). In that
+        # situation, the live DOM is the source of truth: let the LLM reason
+        # from the current question instead of forcing it to satisfy an old
+        # plan step.
+        is_live_quiz = "id=\"optionsBox\"" in dom and "id=\"nextBtn\"" in dom
+        if is_live_quiz:
+            task_context = (
+                f"{self.user_task}\n\n"
+                "This is an active multi-question quiz. Ignore any stale plan "
+                "step and act only on the currently visible quiz state: choose "
+                "one enabled answer, then click Next or Submit only after it is "
+                "visible and enabled."
+            )
+        else:
+            task_context = self._build_task_context()
+
         result = get_next_action(
-            user_task=self._build_task_context(),
+            user_task=task_context,
             dom=dom,
             history=self.history,
         )

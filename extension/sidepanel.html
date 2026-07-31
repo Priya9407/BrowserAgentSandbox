@@ -41,9 +41,13 @@
       <!-- ── Tab context row ────────────────────────────────────── -->
       <div class="panel-hero">
         <div id="tab-context-row" class="tab-context-row">
-          <span class="tab-context-icon">🌐</span>
+          <span class="tab-context-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          </span>
           <span id="tab-url-label" class="tab-url-label">Loading tab…</span>
-          <button id="refresh-context-btn" class="icon-btn" aria-label="Refresh context">↻</button>
+          <button id="refresh-context-btn" class="icon-btn" aria-label="Refresh context">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+          </button>
         </div>
       </div>
 
@@ -52,21 +56,66 @@
 
         <!-- Empty state injected by JS; template shown here for reference:
         <div class="status-line status-step">
-          <span class="status-icon">🛡️</span>
+          <span class="status-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span>
           <span class="status-text">Describe a goal below to start the agent.</span>
         </div>
         -->
 
       </div>
 
-      <!-- ── CAPTCHA / pause banner (mirrors .captcha-banner) ──── -->
+      <!-- ── CAPTCHA / pause banner ──────────────────────────── -->
       <div id="captcha-banner" class="captcha-banner hidden">
-        <span class="captcha-icon">⏸</span>
+        <span class="captcha-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>
+        </span>
         <span class="captcha-text">
           CAPTCHA detected — solve it in the browser window, then click Resume.
         </span>
         <button id="captcha-resume-btn" class="captcha-resume-btn">
           I solved it — Resume
+        </button>
+      </div>
+
+      <!-- ── Approval banner for escalated actions ───────────── -->
+      <div id="approval-banner" class="approval-banner hidden">
+        <span class="approval-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        </span>
+        <div class="approval-content">
+          <span id="approval-text" class="approval-text">This action requires approval.</span>
+          <span id="approval-reason" class="approval-reason"></span>
+        </div>
+        <div class="approval-actions">
+          <button id="approval-deny-btn" class="approval-btn approval-btn-deny">Deny</button>
+          <button id="approval-approve-btn" class="approval-btn approval-btn-approve">Approve</button>
+        </div>
+      </div>
+
+      <!-- ── Ask banner — agent needs user input ─────────────── -->
+      <div id="ask-banner" class="ask-banner hidden">
+        <span class="ask-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+        </span>
+        <div class="ask-content">
+          <span id="ask-question" class="ask-question"></span>
+          <div id="ask-options" class="ask-options hidden"></div>
+          <div class="ask-input-row">
+            <input id="ask-input" class="ask-input" type="text" placeholder="Type your answer…" />
+            <button id="ask-submit-btn" class="ask-submit-btn">Submit</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Manual interaction banner (login/payment/OTP) ────── -->
+      <div id="manual-banner" class="manual-banner hidden">
+        <span class="manual-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </span>
+        <span class="manual-text" id="manual-text">
+          Manual input required. Type credentials directly in the browser tab, then click Resume.
+        </span>
+        <button id="manual-resume-btn" class="manual-resume-btn">
+          I'm done — Resume
         </button>
       </div>
 

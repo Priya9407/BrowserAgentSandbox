@@ -3,8 +3,11 @@ playwright_agent.py — Browser execution engine
 """
 
 import asyncio
+import re
 import time as _time
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 
 from app.agent.agent import BrowserAgent, MAX_STEP_RETRIES
@@ -13,7 +16,7 @@ from app.policy.policy_engine import PolicyEngine
 from app.policy.decision import PolicyDecision
 from app.policy.gate import enforce_action_contract, GateRejected
 from app.agent.planner import generate_plan
-from app.agent.llm import ask_vision_for_element, replan_after_failure
+from app.agent.llm import ask_vision_for_element, replan_after_failure, solve_multiple_choice_quiz
 from app.schemas.action_schema import AgentAction
 from app.tracing.tracer import tracer
 from app.aws.s3_client import upload_screenshot
@@ -35,6 +38,24 @@ _ROLE_ALIASES: dict[str, str] = {
     "searchbox": "searchbox",
     "generic":   None,         # no role — fall through to text search
 }
+
+_HIDDEN_INSTRUCTION_RE = re.compile(
+    r"\b(?:ignore|disregard|override)\b.{0,80}\b(?:instruction|user|previous|system)\b"
+    r"|\b(?:system prompt|prompt injection|do not tell|exfiltrat|steal credentials|"
+    r"send (?:data|credentials)|reveal (?:password|secret|api key))\b"
+    r"|\b(?:download|install|open|visit|navigate|click|buy|purchase|transfer)\b"
+    r"(?:\s+\w+){0,12}\s+(?:from|at|to)?\s*https?://",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _suspicious_hidden_instruction(hidden_result: dict) -> str | None:
+    """Return a suspicious instruction found only in hidden page content."""
+    for element in hidden_result.get("elements", []):
+        text = " ".join((element.get("text") or "").split())
+        if text and _HIDDEN_INSTRUCTION_RE.search(text):
+            return text[:240]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -91,44 +112,78 @@ def semantic_find(page: Page, action: AgentAction, timeout_ms: int = 4000):
     sem = action.semantic_target
     role = _ROLE_ALIASES.get(sem.role.lower()) if sem.role else None
     label = (sem.label or "").strip()
+    require_enabled = action.action_type == "click"
+
+    def first_actionable(locator):
+        """Return the first visible candidate that can receive this action.
+
+        Playwright's role/text locators intentionally include disabled controls.
+        That is useful for assertions, but it is the wrong default for an
+        autonomous click: quiz pages commonly disable every answer after one
+        answer has been selected.  Selecting the first matching disabled
+        answer again caused the retry/re-plan loop seen in the quiz demo.
+        """
+        try:
+            count = locator.count()
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            candidate = locator.nth(index)
+            try:
+                # Do not wait up to ``timeout_ms`` for every hidden match.
+                # A page can have many off-screen/hidden controls, and the
+                # current DOM snapshot is enough to choose among them here.
+                if not candidate.is_visible():
+                    continue
+                if require_enabled and not candidate.is_enabled():
+                    continue
+                return candidate
+            except Exception:
+                continue
+        return None
 
     # ── Strategy 1: role + name ──────────────────────────────────────────
     if role and label:
         try:
-            loc = page.get_by_role(role, name=label)
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            print(f"[semantic_find] ✓ role={role} name='{label}'")
-            return loc
+            loc = first_actionable(page.get_by_role(role, name=label))
+            if loc:
+                print(f"[semantic_find] ✓ role={role} name='{label}'")
+                return loc
         except Exception:
             pass
 
     # ── Strategy 2: role only (first visible) ────────────────────────────
-    if role:
+    # A named target must never degrade to an arbitrary control with the
+    # same role.  For example, if a quiz's "Next" button is hidden, falling
+    # back to the first enabled button used to click an answer while the
+    # action feed still claimed that it clicked "Next".
+    if role and not label:
         try:
-            loc = page.get_by_role(role).first
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            print(f"[semantic_find] ✓ role={role} (first)")
-            return loc
+            loc = first_actionable(page.get_by_role(role))
+            if loc:
+                print(f"[semantic_find] ✓ role={role} (first actionable)")
+                return loc
         except Exception:
             pass
 
     # ── Strategy 3: text content ─────────────────────────────────────────
     if label:
         try:
-            loc = page.get_by_text(label, exact=False).first
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            print(f"[semantic_find] ✓ text='{label}'")
-            return loc
+            loc = first_actionable(page.get_by_text(label, exact=False))
+            if loc:
+                print(f"[semantic_find] ✓ text='{label}'")
+                return loc
         except Exception:
             pass
 
     # ── Strategy 4: placeholder ──────────────────────────────────────────
     if label:
         try:
-            loc = page.get_by_placeholder(label, exact=False)
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            print(f"[semantic_find] ✓ placeholder='{label}'")
-            return loc
+            loc = first_actionable(page.get_by_placeholder(label, exact=False))
+            if loc:
+                print(f"[semantic_find] ✓ placeholder='{label}'")
+                return loc
         except Exception:
             pass
 
@@ -136,10 +191,10 @@ def semantic_find(page: Page, action: AgentAction, timeout_ms: int = 4000):
     css = (action.target or "").strip()
     if css:
         try:
-            loc = page.locator(css)
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            print(f"[semantic_find] ✓ CSS '{css}'")
-            return loc
+            loc = first_actionable(page.locator(css))
+            if loc:
+                print(f"[semantic_find] ✓ CSS '{css}'")
+                return loc
         except Exception:
             pass
 
@@ -149,10 +204,10 @@ def semantic_find(page: Page, action: AgentAction, timeout_ms: int = 4000):
     vision_selector = ask_vision_for_element(page, description)
     if vision_selector:
         try:
-            loc = page.locator(vision_selector)
-            loc.wait_for(state="visible", timeout=timeout_ms)
-            print(f"[semantic_find] ✓ vision selector '{vision_selector}'")
-            return loc
+            loc = first_actionable(page.locator(vision_selector))
+            if loc:
+                print(f"[semantic_find] ✓ vision selector '{vision_selector}'")
+                return loc
         except Exception:
             pass
 
@@ -190,6 +245,59 @@ def _execute(page: Page, action: AgentAction) -> None:
 
     else:
         print(f"[_execute] unhandled action_type: {action.action_type}")
+
+
+def _read_static_multiple_choice_quiz(page: Page) -> list[dict] | None:
+    """Return a supported all-questions-on-one-page quiz, if present."""
+    try:
+        quiz = page.evaluate("""() => {
+            const list = document.querySelector('#quizList');
+            const submit = document.querySelector('#submitBtn');
+            if (!list || !submit || !list.offsetParent || !submit.offsetParent) return null;
+            const questions = [...list.querySelectorAll('.qblock')].map((block, index) => {
+                const question = block.querySelector('.question')?.innerText?.trim();
+                const options = [...block.querySelectorAll('.option')].map(button => button.innerText.trim());
+                return { index, question, options };
+            });
+            return questions.length && questions.every(item => item.question && item.options.length > 1)
+                ? questions
+                : null;
+        }""")
+        return quiz
+    except Exception:
+        return None
+
+
+def _complete_static_multiple_choice_quiz(page: Page, questions: list[dict], emit) -> tuple[bool, str | None]:
+    """Solve the Pop Quiz-style layout with one LLM call and validated clicks."""
+    prompt_questions = [
+        {"question": item["question"], "options": item["options"]}
+        for item in questions
+    ]
+    answers = solve_multiple_choice_quiz(prompt_questions)
+    if len(answers) != len(questions):
+        return False, "The LLM did not return one answer for every quiz question."
+
+    for item, answer in zip(questions, answers):
+        if answer not in item["options"]:
+            return False, f"The LLM returned an option not shown for question {item['index'] + 1}."
+
+        options = page.locator(f"#options-{item['index']} .option")
+        target = options.get_by_text(answer, exact=True)
+        if target.count() != 1 or not target.is_visible() or not target.is_enabled():
+            return False, f"Could not select the LLM answer for question {item['index'] + 1}."
+        target.click(timeout=5_000)
+        emit("step", f"LLM selected: {answer}")
+
+    submit = page.locator("#submitBtn")
+    if submit.count() != 1 or not submit.is_visible() or not submit.is_enabled():
+        return False, "The quiz Submit button was not available."
+    submit.click(timeout=5_000)
+
+    result = page.locator("#resultScreen")
+    if result.count() != 1 or not result.is_visible():
+        return False, "The quiz did not show a result after submission."
+    return True, result.inner_text(timeout=2_000).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +366,66 @@ def run_browser_agent(
                 step_callback(status, text, step_event), loop
             )
 
+    def _request_hidden_instruction_decision(
+        instruction: str, hidden_elements: list[dict]
+    ) -> tuple[str, str | None]:
+        """Surface hidden content to the reviewer and wait for a safe choice."""
+        source = next(
+            (element for element in hidden_elements if instruction in (element.get("text") or "")),
+            {},
+        )
+        selector = f"#{source['id']}" if source.get("id") else source.get("tag", "hidden DOM node")
+        concealment = ", ".join(source.get("reasons", [])) or "hidden DOM content"
+        url_match = re.search(r"https?://[^\s<>'\"]+", instruction)
+        download_url = url_match.group(0).rstrip(".,;:!?)]}") if url_match else None
+        action_id = f"hidden-instruction-{uuid4()}"
+
+        from app.agent.escalation_state import (
+            get_escalation_with_timeout,
+            pending_escalations,
+        )
+
+        pending_escalations[action_id] = "pending"
+        if queue is not None and loop is not None:
+            payload = {
+                "action": {
+                    "action_id": action_id,
+                    "action_type": "hidden_instruction_download",
+                    "target": download_url or selector,
+                    "semantic_target": {"role": "generic", "label": "Hidden page instruction"},
+                    "value": None,
+                    "reasoning": "This instruction is hidden page content, not part of the user's quiz request.",
+                    "cited_source_text": instruction,
+                    "cited_source_location": f"{selector} ({concealment})",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "options": None,
+                },
+                "policy": {
+                    "action_id": action_id,
+                    "risk_category": "download",
+                    "risk_level": "HIGH",
+                    "decision": "ESCALATE",
+                    "hidden_content_detected": True,
+                    "origin": "hidden_page_content",
+                    "topic_drift_detected": True,
+                    "reason": "A hidden page instruction requested a download unrelated to the quiz.",
+                    "metadata": {"concealment_reasons": source.get("reasons", [])},
+                },
+                "approval_actions": {
+                    "approve_label": "Open download page",
+                    "deny_label": "Deny & continue quiz",
+                },
+            }
+            asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
+
+        _emit(
+            "step",
+            "Hidden instruction found. Choose in the Action Feed: deny it and continue the quiz, or open its download page.",
+        )
+        decision = get_escalation_with_timeout(action_id, timeout_ms=10 * 60 * 1000)
+        pending_escalations.pop(action_id, None)
+        return decision or "denied", download_url
+
     # ── Initialise agent ────────────────────────────────────────────────
     browser_agent = BrowserAgent()
     browser_agent.set_task(user_task)
@@ -291,6 +459,15 @@ def run_browser_agent(
     # Track completed steps for re-planning context
     completed_steps: list[dict] = []
 
+    # ── Duplicate action loop detection ────────────────────────────────
+    # Track consecutive identical actions to break out of loops where the
+    # LLM keeps generating the same action on an unchanged page.
+    _last_action_key = ""
+    _last_action_page_state = None
+    _repeat_count = 0
+    _MAX_REPEATS = 2  # after 3 consecutive same actions, force re-plan
+    _static_quiz_checked = False
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         page = browser.new_page()
@@ -316,6 +493,62 @@ def run_browser_agent(
         task_outcome_reason = "Task ended before completion (step budget exhausted)."
 
         while not browser_agent.is_done():
+            # The supplied Pop Quiz displays every question at once and has a
+            # single Submit button. Handle that form as one bounded LLM task
+            # before entering the generic planner/recovery loop.
+            if not _static_quiz_checked:
+                _static_quiz_checked = True
+                quiz_requested = any(
+                    word in user_task.lower() for word in ("quiz", "questions")
+                )
+                static_quiz = _read_static_multiple_choice_quiz(page) if quiz_requested else None
+                if static_quiz:
+                    # A quiz may contain invisible prompt-injection text. Scan
+                    # before asking the LLM for answers so hidden page content
+                    # can never steer the task.
+                    hidden_preflight = detector.detect(page)
+                    suspicious_hidden_text = _suspicious_hidden_instruction(hidden_preflight)
+                    if suspicious_hidden_text:
+                        decision, download_url = _request_hidden_instruction_decision(
+                            suspicious_hidden_text,
+                            hidden_preflight.get("elements", []),
+                        )
+                        if decision == "approved" and download_url:
+                            try:
+                                page.goto(download_url, timeout=15_000, wait_until="domcontentloaded")
+                                _success_count += 1
+                                task_outcome = "done"
+                                task_outcome_reason = "User approved opening the hidden instruction's download page."
+                                _emit("done", "User approved the download page. The quiz was not continued.")
+                            except Exception as exc:
+                                _fail_count += 1
+                                task_outcome = "error"
+                                task_outcome_reason = f"Approved download page could not be opened: {exc}"
+                                _emit("error", task_outcome_reason)
+                            break
+                        _emit(
+                            "step",
+                            "Hidden instruction denied. Continuing with the visible quiz only.",
+                        )
+                    _emit(
+                        "step",
+                        f"Quiz detected — asking the LLM for {len(static_quiz)} answers…",
+                    )
+                    solved, result_text = _complete_static_multiple_choice_quiz(
+                        page, static_quiz, _emit
+                    )
+                    if solved:
+                        _success_count += len(static_quiz) + 1
+                        task_outcome = "done"
+                        task_outcome_reason = result_text
+                        _emit("step", f"Quiz submitted. {result_text}")
+                    else:
+                        _fail_count += 1
+                        task_outcome = "error"
+                        task_outcome_reason = result_text
+                        _emit("error", f"Quiz could not be completed: {result_text}")
+                    break
+
             total = len(browser_agent.plan.steps) if browser_agent.plan and browser_agent.plan.steps else 0
             step_idx = browser_agent.current_step_index
             retry_count = browser_agent.current_step_failure_count()
@@ -367,7 +600,7 @@ def run_browser_agent(
                 pending_captchas[trace_seg.trace_id] = "pending"
                 _emit(
                     "step",
-                    "⏸ CAPTCHA detected — please solve it in the browser "
+                    "CAPTCHA detected — please solve it in the browser "
                     "window, then click Resume.",
                     {
                         "step_number": step_idx + 1,
@@ -417,6 +650,59 @@ def run_browser_agent(
             print(f"\n--- Step {browser_agent.step_count} ---")
             print(action.model_dump())
 
+            # ── Duplicate action detection ─────────────────────────────────
+            # If the LLM generates the exact same action (type + target) more
+            # than _MAX_REPEATS times in a row, the action probably isn't
+            # affecting the page. Force a re-plan to try a different approach.
+            _current_key = f"{action.action_type}|{action.target}"
+            # The same control (for example, "Next") is expected to be
+            # clicked repeatedly as a multi-question form advances. It is a
+            # loop only when the agent proposes it again on the *same* page
+            # state. ``page.content()`` above reflects the live question,
+            # selected state, and button visibility.
+            _current_page_state = hash(dom)
+            if action.action_type not in ("ask", "done"):
+                if (
+                    _current_key == _last_action_key
+                    and _current_page_state == _last_action_page_state
+                    and _last_action_key
+                ):
+                    _repeat_count += 1
+                    if _repeat_count > _MAX_REPEATS:
+                        _emit(
+                            "step",
+                            f"Same action repeated {_repeat_count + 1}x "
+                            f"({action.action_type}: {action.target[:60]}) — "
+                            "re-planning to break the loop…",
+                        )
+                        _repeat_count = 0
+                        _last_action_key = ""
+                        _last_action_page_state = None
+                        # Trigger a re-plan via the recovery mechanism
+                        new_plan_bp = replan_after_failure(
+                            original_task=browser_agent.user_task,
+                            completed_steps=completed_steps,
+                            failed_step={"goal": browser_agent.current_step_goal},
+                            failure_reason=(
+                                f"Action loop detected: same action "
+                                f"({action.action_type}: {action.target[:60]}) "
+                                f"generated {_repeat_count + 1}x without page change."
+                            ),
+                            dom=dom,
+                        )
+                        if new_plan_bp.steps:
+                            browser_agent.replace_remaining_plan(new_plan_bp)
+                            _emit(
+                                "step",
+                                "New plan: "
+                                + " → ".join(s.goal for s in new_plan_bp.steps),
+                            )
+                        continue  # re-loop with fresh plan
+                else:
+                    _repeat_count = 0
+                    _last_action_key = _current_key
+                    _last_action_page_state = _current_page_state
+
             # ── Ask signal ────────────────────────────────────────────────
             if action.action_type == "ask":
                 from app.agent.ask_state import pending_asks
@@ -441,7 +727,7 @@ def run_browser_agent(
                 
                 _emit(
                     "step",
-                    f"❓ Agent asks: {action.value}" + (" (choose an option)" if action_options else ""),
+                    f"Question: {action.value}" + (" (choose an option)" if action_options else ""),
                     evt,
                 )
                 
@@ -479,7 +765,7 @@ def run_browser_agent(
                     goal = browser_agent.current_step_goal
                     _emit(
                         "step",
-                        f"✓ Completed: {goal}",
+                        f"Completed: {goal}",
                         {
                             "step_number": step_idx + 1,
                             "total_steps": total,
@@ -500,7 +786,7 @@ def run_browser_agent(
                         goal = browser_agent.current_step_goal
                         _emit(
                             "step",
-                            f"✓ Completed: {goal}\n\n{msg}",
+                            f"Completed: {goal}\n\n{msg}",
                             {
                                 "step_number": step_idx + 1,
                                 "total_steps": total,
@@ -536,7 +822,14 @@ def run_browser_agent(
                 hidden_page_text=hidden_page_text,
             )
             import app.agent.escalation_state as es
-            if result.decision == PolicyDecision.ESCALATE and es.auto_approve_low_unknown and result.risk_level in ("LOW", "UNKNOWN"):
+            if (
+                result.decision == PolicyDecision.ESCALATE
+                and es.auto_approve_low_unknown
+                and result.risk_level in ("LOW", "UNKNOWN")
+                # 🛡️ Never auto-approve sensitive categories even when the
+                # global toggle is on — the blocklist is the final word.
+                and es.should_auto_approve(result.risk_category.value)
+            ):
                 result.decision = PolicyDecision.ALLOW
                 result.reason = f"Auto-approved {result.risk_level} risk action."
                 _emit("step", f"Auto-approved {result.risk_level} risk action: {action.action_type}")
@@ -708,7 +1001,7 @@ def _execute_with_recovery(
         if failure_count <= MAX_STEP_RETRIES:
             emit(
                 "step",
-                f"⚠ Step {step_idx + 1} failed — retrying… ({failure_msg[:80]})",
+                f"Step {step_idx + 1} failed — retrying… ({failure_msg[:80]})",
                 {
                     "step_number": step_idx + 1,
                     "total_steps": total,
@@ -721,7 +1014,7 @@ def _execute_with_recovery(
                 # Give the page a moment to settle before the retry
                 page.wait_for_timeout(800)
                 _execute(page, action)
-                emit("step", f"✓ Retry succeeded: {goal}")
+                emit("step", f"Retry succeeded: {goal}")
                 return True
             except Exception as retry_exc:
                 failure_msg = str(retry_exc)
@@ -731,7 +1024,7 @@ def _execute_with_recovery(
         # ── Re-plan ───────────────────────────────────────────────────────
         emit(
             "step",
-            f"↻ Re-planning after failed step {step_idx + 1}: {failure_msg[:100]}",
+            f"Re-planning after failed step {step_idx + 1}: {failure_msg[:100]}",
             {
                 "step_number": step_idx + 1,
                 "total_steps": total,
@@ -763,7 +1056,7 @@ def _execute_with_recovery(
             new_total = len(new_plan.steps)
             emit(
                 "step",
-                f"↻ New plan ({new_total} steps): "
+                f"New plan ({new_total} steps): "
                 + " → ".join(s.goal for s in new_plan.steps),
             )
             return False  # let the main loop re-run with the new plan
@@ -771,7 +1064,7 @@ def _execute_with_recovery(
         # ── Honest failure: couldn't complete this part ────────────────
         emit(
             "step",
-            f"✗ Couldn't complete: \"{goal}\" — {failure_msg[:120]}. Moving on.",
+            f"Couldn't complete: \"{goal}\" — {failure_msg[:120]}. Moving on.",
             {
                 "step_number": step_idx + 1,
                 "total_steps": total,
@@ -809,36 +1102,42 @@ def _handle_escalation(
     goal = browser_agent.current_step_goal
 
     if auto_approve:
-        emit("step", f"Auto-approved escalated action: {action.action_type}")
-        _execute_with_recovery(
-            page=page, action=action, browser_agent=browser_agent,
-            completed_steps=completed_steps,
-            dom=_safe_page_content(page, "escalation_auto_approve"),
-            emit=emit, total=total,
-        )
-        browser_agent.advance_step()
-        return
+        from app.agent.escalation_state import should_auto_approve
+        if not should_auto_approve(result.risk_category):
+            emit("step", f"Auto-approve blocked for {result.risk_category} action — awaiting human approval.")
+            # Fall through to manual approval with timeout
+        else:
+            emit("step", f"Auto-approved escalated action: {action.action_type}")
+            exec_ok = _execute_with_recovery(
+                page=page, action=action, browser_agent=browser_agent,
+                completed_steps=completed_steps,
+                dom=_safe_page_content(page, "escalation_auto_approve"),
+                emit=emit, total=total,
+            )
+            if exec_ok:
+                browser_agent.advance_step()
+            return
 
     if queue is not None and loop is not None:
         print(f"Waiting for human approval on action {action.action_id}…")
-        from app.agent.escalation_state import pending_escalations
+        from app.agent.escalation_state import pending_escalations, get_escalation_with_timeout
         pending_escalations[action.action_id] = "pending"
 
-        while pending_escalations.get(action.action_id) == "pending":
-            page.wait_for_timeout(1000)
+        # ⏱ WAIT WITH TIMEOUT — don't hang forever (Issue #8 fix)
+        decision_ui = get_escalation_with_timeout(action.action_id, timeout_ms=120_000)
 
-        decision_ui = pending_escalations.get(action.action_id)
         if decision_ui == "approved":
             emit("step", f"Human approved — executing {action.action_type}")
             print(f"Human APPROVED action {action.action_id}")
-            _execute_with_recovery(
+            exec_ok = _execute_with_recovery(
                 page=page, action=action, browser_agent=browser_agent,
                 completed_steps=completed_steps,
                 dom=_safe_page_content(page, "escalation_approved"),
                 emit=emit, total=total,
             )
-            browser_agent.advance_step()
-        else:
+            if exec_ok:
+                browser_agent.advance_step()
+        elif decision_ui == "denied":
             emit(
                 "step",
                 f"Human denied action — skipping step {step_idx + 1}.",
@@ -851,6 +1150,21 @@ def _handle_escalation(
                 },
             )
             print(f"Human DENIED action {action.action_id}.")
+            browser_agent.advance_step()
+        else:
+            # Timed out or cancelled
+            emit(
+                "step",
+                f"Escalation timed out or cancelled for step {step_idx + 1} — skipping.",
+                {
+                    "step_number": step_idx + 1,
+                    "total_steps": total,
+                    "goal": goal,
+                    "outcome": "skipped",
+                    "retry": 0,
+                },
+            )
+            print(f"Escalation TIMED OUT for {action.action_id}.")
             browser_agent.advance_step()
     else:
         emit("error", "Escalated action requires human approval but no UI connected.")

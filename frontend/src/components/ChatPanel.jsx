@@ -13,37 +13,58 @@
 
 import { useEffect, useRef, useState } from "react";
 import StepTimeline from "./StepTimeline";
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  HelpCircle,
+  Link2,
+  Loader2,
+  Send,
+  Trash2,
+} from "lucide-react";
 
 const STATUS_ICON = {
-  planning: "🧠",
-  done:     "✅",
-  error:    "❌",
+  planning: <Loader2 size={13} className="spin" />,
+  done:     <CheckCircle2 size={13} />,
+  error:    <AlertCircle size={13} />,
 };
 
-// Demo task suggestions — prefer simple, reliable pages for demo lock
+// Demo task suggestions. Most use hardwired scripts for deterministic demos;
+// the quiz shortcut deliberately uses the live LLM path so it reasons about
+// the questions currently shown on the target page.
+//
+// A chip with `demo_task_key` maps to a pre-scripted demo in
+// backend/app/agent/demo_scripts.py and posts to POST /chat-demo. Chips with
+// a URL but no key post to the live /chat endpoint, preserving LLM reasoning
+// and the same policy/gate/execute pipeline.
 const DEMO_TASKS = [
   {
-    label: "Product price",
-    goal:  "Search for the Sony WH-1000XM5 headphones and tell me the current price",
-    // Use a simple search results page (less dynamic than travel widgets)
-    url:   "https://www.google.com/search?q=Sony+WH-1000XM5+price",
+    label: "Complete quiz (LLM)",
+    goal:  "Go to this website and complete the quiz by answering every visible question: https://priya9407.github.io/QuizForFrontier/",
+    url:   "https://priya9407.github.io/QuizForFrontier/",
   },
   {
-    label: "Check a flight (simple)",
-    goal:  "Find one flight result for Delhi to Goa next week and report the price and airline",
-    // Use a generic search for flights instead of the Google Flights widget which can be flaky
-    url:   "https://www.google.com/search?q=delhi+to+goa+flight+one+way+next+week",
+    label: "Product price",
+    demo_task_key: "product_price",
+    goal:  "Search for the SoundWave Buds Lite earbuds and tell me the current price",
+  },
+  {
+    label: "Check a flight",
+    demo_task_key: "check_flight",
+    goal:  "Find a flight result on SkyHigh Flights and report the price",
+  },
+  {
+    label: "Buy laptop",
+    demo_task_key: "buy_laptop",
+    goal:  "Buy the laptop listed on the shopping page",
   },
   {
     label: "Restaurant hours",
-    goal:  "Look up the opening hours of Domino's Pizza in Bangalore and report them",
-    url:   "https://www.google.com/search?q=Dominos+Pizza+Bangalore+opening+hours",
-  },
-  {
-    label: "Example site",
-    goal:  "Open example.com and tell me the page title",
-    // A static, highly reliable page for demos
-    url:   "https://example.com/",
+    demo_task_key: "restaurant_hours",
+    goal:  "Look up the opening hours of Spice Garden restaurant and report them",
   },
 ];
 
@@ -115,6 +136,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   const [captchaPending, setCaptchaPending] = useState(false);
   const [askPending, setAskPending]   = useState(false);
   const [askQuestion, setAskQuestion] = useState("");
+  const [askOptions, setAskOptions]   = useState([]);
   const [askAnswer, setAskAnswer]     = useState("");
   // Clarification state (pre-task questions)
   const [clarifyQueue, setClarifyQueue]   = useState([]); // [{question, index, total}]
@@ -138,15 +160,35 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
 
     const { status, text, step_event: se } = evt;
 
-    // ── Clarification questions (pre-task) ──────────────────────────────────
-    if (status === "ask" && se && se.ask_question != null && se.ask_index != null) {
-      clarifySessionRef.current = evt.session_id;
-      setClarifyQueue(prev => {
-        // Only add if not already in queue
-        if (prev.some(q => q.index === se.ask_index)) return prev;
-        return [...prev, { question: se.ask_question, index: se.ask_index, total: se.ask_total }];
-      });
-      return;
+    // ── Questions (any shape — always show an input box) ──────────────────
+    // 1. Legacy pre-task clarifier: status="ask" with ask_index/ask_total.
+    //    Route into the clarify queue (answered one at a time via
+    //    /resolve-clarification), matching the original protocol.
+    // 2. Live agent question: step_event.ask_question (current backend).
+    //    Route into the ask banner (options + Other + text box).
+    // 3. Bare "ask" text with no structured event: fall back to the ask
+    //    banner so the user ALWAYS gets an input box.
+    if (status === "ask") {
+      if (se?.ask_question != null && se?.ask_index != null) {
+        clarifySessionRef.current = evt.session_id;
+        setClarifyQueue(prev => {
+          if (prev.some(q => q.index === se.ask_index)) return prev;
+          return [...prev, { question: se.ask_question, index: se.ask_index, total: se.ask_total }];
+        });
+      } else {
+        setAskPending(true);
+        setAskQuestion(se?.ask_question ?? text);
+        setAskOptions(Array.isArray(se?.ask_options) ? se.ask_options : []);
+        setAskAnswer("");
+      }
+      return; // never render an ask as a bare flat line without an input box
+    }
+
+    if (se?.ask_question) {
+      setAskPending(true);
+      setAskQuestion(se.ask_question);
+      setAskOptions(Array.isArray(se.ask_options) ? se.ask_options : []);
+      setAskAnswer("");
     }
 
     // Once all questions answered (status=planning with outcome=resolved), clear queue
@@ -163,15 +205,13 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
 
       // CAPTCHA or Ask pause/resume — show or hide the Resume banners
       if (se.outcome === "paused") {
-        if (se.ask_question) {
-          setAskPending(true);
-          setAskQuestion(se.ask_question);
-        } else {
+        if (!se.ask_question) {
           setCaptchaPending(true);
         }
       } else {
         setCaptchaPending(false);
         setAskPending(false);
+        setAskOptions([]);
       }
 
       if (text.startsWith("↻ New plan")) {
@@ -237,7 +277,9 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
   // -------------------------------------------------------------------------
   // Submit
   // -------------------------------------------------------------------------
-  const handleSubmit = async (goalText, startUrl) => {
+  // demoTaskKey — when provided, the chip runs the hardwired /chat-demo script
+  // (deterministic, no LLM). Otherwise it falls back to the live /chat path.
+  const handleSubmit = async (goalText, startUrl, demoTaskKey) => {
     const goal = (goalText ?? input).trim();
     if (!goal || running) return;
 
@@ -259,6 +301,26 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
     ]);
 
     try {
+      // ── Hardwired demo path: POST /chat-demo with the script key ──────
+      if (demoTaskKey) {
+        const res = await fetch("http://localhost:8000/chat-demo", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ demo_task_key: demoTaskKey, headless: false }),
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => res.statusText);
+          throw new Error(`Server returned ${res.status}: ${text}`);
+        }
+
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        onSessionStart?.(data.session_id);
+        return;
+      }
+
+      // ── Live LLM path ──────────────────────────────────────────────────
       const res = await fetch("http://localhost:8000/chat", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -408,7 +470,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
             onClick={handleClear}
             title="Clear chat"
           >
-            Clear
+            <Trash2 size={13} /> Clear
           </button>
         )}
       </div>
@@ -425,7 +487,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
                 <button
                   key={t.label}
                   className="demo-chip"
-                  onClick={() => handleSubmit(t.goal, t.url)}
+                  onClick={() => handleSubmit(t.goal, t.url, t.demo_task_key)}
                   disabled={running}
                 >
                   {t.label}
@@ -472,7 +534,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
                 {Math.max(...stepTimeline.map(s => s.totalSteps || stepTimeline.length), stepTimeline.length)} done
               </span>
               <span className="tl-card-chevron">
-                {timelineOpen ? "▲" : "▼"}
+                {timelineOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </span>
             </button>
 
@@ -489,21 +551,25 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           <div className={`summary-card summary-card-${summary.status}`}>
             <div className="summary-card-header">
               <span className="summary-card-icon">
-                {summary.status === "done" ? "✅" : "❌"}
+                {summary.status === "done" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
               </span>
               <span className="summary-card-title">
                 {summary.status === "done" ? "Task complete" : "Task ended with an error"}
               </span>
             </div>
             <div className="summary-card-stats">
-              <div className="summary-stat">
-                <span className="summary-stat-value">{summary.successCount}</span>
-                <span className="summary-stat-label">succeeded</span>
-              </div>
-              <div className="summary-stat">
-                <span className="summary-stat-value">{summary.failCount}</span>
-                <span className="summary-stat-label">failed / skipped</span>
-              </div>
+              {summary.successCount > 0 && (
+                <div className="summary-stat">
+                  <span className="summary-stat-value">{summary.successCount}</span>
+                  <span className="summary-stat-label">succeeded</span>
+                </div>
+              )}
+              {summary.failCount > 0 && (
+                <div className="summary-stat">
+                  <span className="summary-stat-value">{summary.failCount}</span>
+                  <span className="summary-stat-label">failed / skipped</span>
+                </div>
+              )}
               <div className="summary-stat">
                 <span className="summary-stat-value">
                   {summary.elapsedSeconds != null ? `${summary.elapsedSeconds}s` : "—"}
@@ -521,7 +587,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           return (
             <div className="captcha-banner" style={{ borderColor: "#6366f1", background: "rgba(99,102,241,0.12)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-                <span className="captcha-banner-icon">🤖</span>
+                <span className="captcha-banner-icon"><HelpCircle size={18} /></span>
                 <span style={{ fontSize: "11px", color: "#a5b4fc", fontWeight: 600 }}>
                   Question {answeredCount + 1} of {current.total}
                 </span>
@@ -549,7 +615,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
         {/* ── CAPTCHA pause banner ─────────────────────────────────────── */}
         {captchaPending && (
           <div className="captcha-banner">
-            <span className="captcha-banner-icon">⏸</span>
+            <span className="captcha-banner-icon"><AlertTriangle size={18} /></span>
             <span className="captcha-banner-text">
               CAPTCHA detected — solve it in the browser window, then click Resume.
             </span>
@@ -563,25 +629,68 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           </div>
         )}
 
-        {/* ── Ask User banner ─────────────────────────────────────── */}
+        {/* ── Ask User banner — options + Other + text box ────────── */}
         {askPending && (
-          <div className="captcha-banner">
-            <span className="captcha-banner-icon">❓</span>
-            <span className="captcha-banner-text">
-              {askQuestion}
-            </span>
+          <div className="captcha-banner" style={{ alignItems: "flex-start", flexDirection: "column" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", width: "100%" }}>
+              <span className="captcha-banner-icon">?</span>
+              <span className="captcha-banner-text">{askQuestion}</span>
+            </div>
+
+            {askOptions.length > 0 && (
+              <div className="ask-options" style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "6px" }}>
+                {askOptions.map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => setAskAnswer(opt)}
+                    style={{
+                      border: askAnswer === opt ? "1px solid #38d9a9" : "1px solid rgba(255,255,255,0.2)",
+                      background: askAnswer === opt ? "rgba(56,217,169,0.25)" : "rgba(255,255,255,0.05)",
+                      color: askAnswer === opt ? "#38d9a9" : "#d6cfdf",
+                      borderRadius: "999px",
+                      padding: "6px 14px",
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {opt}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => { setAskAnswer(""); document.getElementById("__ask-text-input")?.focus(); }}
+                  style={{
+                    border: "1px dashed rgba(255,255,255,0.3)",
+                    background: "transparent",
+                    color: "#b6adc7",
+                    borderRadius: "999px",
+                    padding: "6px 14px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Other
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleSubmitAsk} style={{ display: "flex", gap: "8px", marginTop: "8px", width: "100%" }}>
               <input
+                id="__ask-text-input"
                 type="text"
                 value={askAnswer}
                 onChange={e => setAskAnswer(e.target.value)}
                 style={{ flex: 1, padding: "6px", borderRadius: "4px", border: "1px solid #ccc", background: "rgba(255, 255, 255, 0.1)", color: "white" }}
-                placeholder="Type your answer here..."
+                placeholder="Type your answer, or pick an option..."
                 autoFocus
               />
               <button
                 type="submit"
                 className="captcha-resume-btn"
+                disabled={!askAnswer.trim()}
               >
                 Submit Answer
               </button>
@@ -589,10 +698,9 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           </div>
         )}
 
-        {/* Typing indicator */}
-        {running && (
+        {/* Typing indicator */}          {running && (
           <div className="chat-status-line chat-status-step chat-typing">
-            <span className="chat-status-icon">⚙️</span>
+            <span className="chat-status-icon"><Loader2 size={13} className="spin" /></span>
             <span className="chat-typing-dots">
               <span /><span /><span />
             </span>
@@ -622,7 +730,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           title={showUrl ? "Hide URL field" : "Set starting URL"}
           onClick={() => setShowUrl(v => !v)}
         >
-          🔗
+          <Link2 size={15} />
         </button>
         <textarea
           ref={inputRef}
@@ -639,7 +747,7 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
           onClick={() => handleSubmit()}
           disabled={!input.trim() || running}
         >
-          {running ? "…" : "Send"}
+          {running ? <Loader2 size={15} className="spin" /> : <><Send size={15} /> Send</>}
         </button>
       </div>
     </div>

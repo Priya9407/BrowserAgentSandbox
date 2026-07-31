@@ -14,7 +14,8 @@ latency without adding safety value.
 Tripwire rule:
   - NAVIGATION / FORM_FILL / UNKNOWN  → lightweight pass
     (risk-level only, skip source classifier + topic drift,
-    ALLOW immediately unless hidden content is on the page)
+    ALLOW immediately unless hidden content is on the page AND
+    the action type is sensitive)
   - CREDENTIAL / PAYMENT / SEND / DELETE / DOWNLOAD / FILE_UPLOAD
     → full provenance check (source classifier + topic drift + origin-aware decision)
 
@@ -25,7 +26,8 @@ Decision matrix (sensitive actions only)
 -----------------------------------------
 topic_drift                               → DENY if critical, else ESCALATE
 origin=hidden_page_content                → DENY if critical, else ESCALATE
-hidden_content_detected (page heuristic)  → DENY if DELETE, else ESCALATE
+hidden_content_detected (page heuristic)  → DENY if DELETE, ESCALATE if sensitive,
+                                           ALLOW if non-sensitive
 origin=visible_page_content + high risk   → ESCALATE
 origin=user_task                          → normal risk rules
 """
@@ -102,11 +104,33 @@ class PolicyEngine:
             hidden_page_text=hidden_page_text,
         )
 
-        topic_drift_detected = self.topic_drift_detector.detect(
-            user_task=user_task,
-            reasoning=action.reasoning,
-            cited_source_text=action.cited_source_text,
+        # 🛡️ Topic-drift guard: only treat drift as meaningful when the
+        # agent's reasoning is NOT traceable to the user's own words.
+        # If origin == USER_TASK the reasoning came from what the human
+        # typed — it cannot be a page-injected instruction, and the LLM
+        # drift detector frequently false-positives on normal pages
+        # (chat/social/forums), escalating everyday actions for no reason.
+        # A quiz answer can be semantically unrelated to the wording of the
+        # user's goal ("Paris" vs. "complete the quiz") while still being
+        # exactly the visible, low-risk interaction they requested. Avoid
+        # sending those known quiz controls through a spurious human-approval
+        # loop. This exception is deliberately narrow and never applies to
+        # hidden or unverifiable sources.
+        target = (action.target or "").lower()
+        is_visible_quiz_control = (
+            action.action_type == "click"
+            and origin == Origin.VISIBLE_PAGE_CONTENT
+            and ("optionsbox" in target or "nextbtn" in target)
         )
+
+        if origin != Origin.USER_TASK and not is_visible_quiz_control:
+            topic_drift_detected = self.topic_drift_detector.detect(
+                user_task=user_task,
+                reasoning=action.reasoning,
+                cited_source_text=action.cited_source_text,
+            )
+        else:
+            topic_drift_detected = False
 
         # ------------------------------------
         # STEP 4 — Decision
@@ -150,9 +174,14 @@ class PolicyEngine:
             return PolicyDecision.DENY if category in _critical else PolicyDecision.ESCALATE
 
         # UNVERIFIED provenance: the LLM fabricated or hallucinated the citation.
-        # Treat this as at least as dangerous as hidden content — the model
-        # cannot be trusted to justify its own actions.
+        # For sensitive actions this is dangerous — keep the strict check.
+        # For non-sensitive actions (click, navigate, fill, scroll), the LLM
+        # often returns empty or generic cited_source_text, which the source
+        # classifier can't match anywhere on the page. Allow these through
+        # since the action itself isn't high-risk.
         if origin == Origin.UNVERIFIED:
+            if category not in _SENSITIVE:
+                return PolicyDecision.ALLOW
             _hard_deny = {RiskCategory.CREDENTIAL, RiskCategory.PAYMENT,
                           RiskCategory.DELETE, RiskCategory.SEND}
             return PolicyDecision.DENY if category in _hard_deny else PolicyDecision.ESCALATE
@@ -163,8 +192,13 @@ class PolicyEngine:
             return PolicyDecision.DENY if category in _hard_deny else PolicyDecision.ESCALATE
 
         # Page has hidden elements (heuristic detector), agent didn't cite them.
+        # Non-sensitive actions (click, navigate, fill, etc.) are safe — the hidden
+        # content didn't influence the agent's decision. Only escalate when the action
+        # is sensitive AND hidden elements exist on the page.
         if hidden:
-            return PolicyDecision.DENY if category == RiskCategory.DELETE else PolicyDecision.ESCALATE
+            if category in _SENSITIVE:
+                return PolicyDecision.DENY if category == RiskCategory.DELETE else PolicyDecision.ESCALATE
+            return PolicyDecision.ALLOW
 
         # Reasoning comes from visible page text (not user's own words).
         if origin == Origin.VISIBLE_PAGE_CONTENT:
@@ -206,6 +240,11 @@ class PolicyEngine:
             )
 
         if origin == Origin.UNVERIFIED:
+            if decision == PolicyDecision.ALLOW:
+                return (
+                    "The agent's cited reasoning is not traceable to any page "
+                    "content, but the action is low-risk. Allowing."
+                )
             base = (
                 "The agent's cited reasoning cannot be verified against any known "
                 "source (user task, visible page text, or hidden page text). "
@@ -223,6 +262,12 @@ class PolicyEngine:
             )
 
         if hidden:
+            if decision == PolicyDecision.ALLOW:
+                return (
+                    "Hidden HTML/CSS content detected on the page, but "
+                    "the agent's reasoning does not cite hidden content. "
+                    "Low-risk action allowed."
+                )
             return (
                 "Hidden HTML/CSS content detected on the page. "
                 "The agent successfully ignored the injection, but the action is "
