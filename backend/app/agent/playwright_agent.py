@@ -542,6 +542,9 @@ def run_browser_agent(
                         task_outcome = "done"
                         task_outcome_reason = result_text
                         _emit("step", f"Quiz submitted. {result_text}")
+                        # Notify chat immediately; the visible browser may
+                        # remain open afterward for manual inspection.
+                        _emit("done", f"Task complete: {result_text}")
                     else:
                         _fail_count += 1
                         task_outcome = "error"
