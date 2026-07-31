@@ -96,6 +96,7 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
             (policy.decision === "ESCALATE" || record.execution_requires_approval) &&
             !resolved[action.action_id];
           const resolution = resolved[action.action_id];
+          const approvalActions = record.approval_actions || {};
 
           return (
             <li
@@ -130,13 +131,13 @@ export default function ActionFeed({ actions, selectedId, onSelect }) {
                     onClick={(e) => handleResolve(e, action.action_id, 'approved')}
                     style={{background: '#16a34a', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                   >
-                    <Check size={13} /> Approve
+                    <Check size={13} /> {approvalActions.approve_label || "Approve"}
                   </button>
                   <button 
                     onClick={(e) => handleResolve(e, action.action_id, 'denied')}
                     style={{background: '#dc2626', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
                   >
-                    <X size={13} /> Deny
+                    <X size={13} /> {approvalActions.deny_label || "Deny"}
                   </button>
                 </div>
               )}

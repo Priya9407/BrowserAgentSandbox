@@ -3,8 +3,11 @@ playwright_agent.py — Browser execution engine
 """
 
 import asyncio
+import re
 import time as _time
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout
 
 from app.agent.agent import BrowserAgent, MAX_STEP_RETRIES
@@ -35,6 +38,24 @@ _ROLE_ALIASES: dict[str, str] = {
     "searchbox": "searchbox",
     "generic":   None,         # no role — fall through to text search
 }
+
+_HIDDEN_INSTRUCTION_RE = re.compile(
+    r"\b(?:ignore|disregard|override)\b.{0,80}\b(?:instruction|user|previous|system)\b"
+    r"|\b(?:system prompt|prompt injection|do not tell|exfiltrat|steal credentials|"
+    r"send (?:data|credentials)|reveal (?:password|secret|api key))\b"
+    r"|\b(?:download|install|open|visit|navigate|click|buy|purchase|transfer)\b"
+    r"(?:\s+\w+){0,12}\s+(?:from|at|to)?\s*https?://",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _suspicious_hidden_instruction(hidden_result: dict) -> str | None:
+    """Return a suspicious instruction found only in hidden page content."""
+    for element in hidden_result.get("elements", []):
+        text = " ".join((element.get("text") or "").split())
+        if text and _HIDDEN_INSTRUCTION_RE.search(text):
+            return text[:240]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +366,66 @@ def run_browser_agent(
                 step_callback(status, text, step_event), loop
             )
 
+    def _request_hidden_instruction_decision(
+        instruction: str, hidden_elements: list[dict]
+    ) -> tuple[str, str | None]:
+        """Surface hidden content to the reviewer and wait for a safe choice."""
+        source = next(
+            (element for element in hidden_elements if instruction in (element.get("text") or "")),
+            {},
+        )
+        selector = f"#{source['id']}" if source.get("id") else source.get("tag", "hidden DOM node")
+        concealment = ", ".join(source.get("reasons", [])) or "hidden DOM content"
+        url_match = re.search(r"https?://[^\s<>'\"]+", instruction)
+        download_url = url_match.group(0).rstrip(".,;:!?)]}") if url_match else None
+        action_id = f"hidden-instruction-{uuid4()}"
+
+        from app.agent.escalation_state import (
+            get_escalation_with_timeout,
+            pending_escalations,
+        )
+
+        pending_escalations[action_id] = "pending"
+        if queue is not None and loop is not None:
+            payload = {
+                "action": {
+                    "action_id": action_id,
+                    "action_type": "hidden_instruction_download",
+                    "target": download_url or selector,
+                    "semantic_target": {"role": "generic", "label": "Hidden page instruction"},
+                    "value": None,
+                    "reasoning": "This instruction is hidden page content, not part of the user's quiz request.",
+                    "cited_source_text": instruction,
+                    "cited_source_location": f"{selector} ({concealment})",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "options": None,
+                },
+                "policy": {
+                    "action_id": action_id,
+                    "risk_category": "download",
+                    "risk_level": "HIGH",
+                    "decision": "ESCALATE",
+                    "hidden_content_detected": True,
+                    "origin": "hidden_page_content",
+                    "topic_drift_detected": True,
+                    "reason": "A hidden page instruction requested a download unrelated to the quiz.",
+                    "metadata": {"concealment_reasons": source.get("reasons", [])},
+                },
+                "approval_actions": {
+                    "approve_label": "Open download page",
+                    "deny_label": "Deny & continue quiz",
+                },
+            }
+            asyncio.run_coroutine_threadsafe(queue.put(payload), loop)
+
+        _emit(
+            "step",
+            "Hidden instruction found. Choose in the Action Feed: deny it and continue the quiz, or open its download page.",
+        )
+        decision = get_escalation_with_timeout(action_id, timeout_ms=10 * 60 * 1000)
+        pending_escalations.pop(action_id, None)
+        return decision or "denied", download_url
+
     # ── Initialise agent ────────────────────────────────────────────────
     browser_agent = BrowserAgent()
     browser_agent.set_task(user_task)
@@ -422,6 +503,33 @@ def run_browser_agent(
                 )
                 static_quiz = _read_static_multiple_choice_quiz(page) if quiz_requested else None
                 if static_quiz:
+                    # A quiz may contain invisible prompt-injection text. Scan
+                    # before asking the LLM for answers so hidden page content
+                    # can never steer the task.
+                    hidden_preflight = detector.detect(page)
+                    suspicious_hidden_text = _suspicious_hidden_instruction(hidden_preflight)
+                    if suspicious_hidden_text:
+                        decision, download_url = _request_hidden_instruction_decision(
+                            suspicious_hidden_text,
+                            hidden_preflight.get("elements", []),
+                        )
+                        if decision == "approved" and download_url:
+                            try:
+                                page.goto(download_url, timeout=15_000, wait_until="domcontentloaded")
+                                _success_count += 1
+                                task_outcome = "done"
+                                task_outcome_reason = "User approved opening the hidden instruction's download page."
+                                _emit("done", "User approved the download page. The quiz was not continued.")
+                            except Exception as exc:
+                                _fail_count += 1
+                                task_outcome = "error"
+                                task_outcome_reason = f"Approved download page could not be opened: {exc}"
+                                _emit("error", task_outcome_reason)
+                            break
+                        _emit(
+                            "step",
+                            "Hidden instruction denied. Continuing with the visible quiz only.",
+                        )
                     _emit(
                         "step",
                         f"Quiz detected — asking the LLM for {len(static_quiz)} answers…",

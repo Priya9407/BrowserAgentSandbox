@@ -558,14 +558,18 @@ export default function ChatPanel({ socketEvents, activeSessionId, onSessionStar
               </span>
             </div>
             <div className="summary-card-stats">
-              <div className="summary-stat">
-                <span className="summary-stat-value">{summary.successCount}</span>
-                <span className="summary-stat-label">succeeded</span>
-              </div>
-              <div className="summary-stat">
-                <span className="summary-stat-value">{summary.failCount}</span>
-                <span className="summary-stat-label">failed / skipped</span>
-              </div>
+              {summary.successCount > 0 && (
+                <div className="summary-stat">
+                  <span className="summary-stat-value">{summary.successCount}</span>
+                  <span className="summary-stat-label">succeeded</span>
+                </div>
+              )}
+              {summary.failCount > 0 && (
+                <div className="summary-stat">
+                  <span className="summary-stat-value">{summary.failCount}</span>
+                  <span className="summary-stat-label">failed / skipped</span>
+                </div>
+              )}
               <div className="summary-stat">
                 <span className="summary-stat-value">
                   {summary.elapsedSeconds != null ? `${summary.elapsedSeconds}s` : "—"}
