@@ -233,9 +233,9 @@ The defense is not a prompt. It is a pipeline.
 ---
 
 # Authors 
-Nithya K
-Architaa A
-Joshitha Ramesh
-Priyadarshini V
+- Nithya K
+- Architaa A
+- Joshitha Ramesh
+- Priya Dharshini V
 
 # Built for Frontier hackathon 
