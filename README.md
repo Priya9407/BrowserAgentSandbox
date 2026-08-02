@@ -212,13 +212,13 @@ BrowserAgentSandbox/
 
 ## Demo
 
-[▶ Watch Demo Video](../Demo.mp4)
+[▶ Watch Demo Video](frontier.mp4)
 
 ---
 
 ## Architecture
 
-![Architecture](../architecture.jpeg)
+![Architecture](architecture.jpeg)
 
 ---
 
